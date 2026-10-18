@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { background: #030712; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; font-family: sans-serif; }
+@keyframes surge {
+  0% { stroke-dashoffset: 240; }
+  100% { stroke-dashoffset: 0; }
+}
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50% { opacity: 0.65; transform: scale(1.06); }
+}
+@keyframes beacon {
+  0%, 100% { transform: scale(1); opacity: 0.8; box-shadow: 0 0 6px #00f2fe; }
+  50% { transform: scale(1.2); opacity: 1; box-shadow: 0 0 14px #00f2fe; }
+}
+.bolt-surge {
+  stroke-dasharray: 60 180;
+  animation: surge 3s linear infinite;
+}
+.ambient-glow {
+  animation: pulseGlow 4s ease-in-out infinite;
+}
+.beacon-dot {
+  animation: beacon 2s ease-in-out infinite;
+}
+</style>
+</head>
+<body>
+  <div style='display: flex; align-items: center; gap: 14px;'>
+    <div style='position: relative; width: 46px; height: 46px;'>
+      <!-- Ambient aura -->
+      <div class='ambient-glow' style='position: absolute; inset: -4px; border-radius: 18px; background: radial-gradient(circle, rgba(6,182,212,0.4) 0%, rgba(6,182,212,0) 70%); filter: blur(8px); pointer-events: none;'></div>
+      
+      <!-- Squircle Container -->
+      <div style='position: absolute; inset: 0; border-radius: 14px; background: linear-gradient(180deg, #091b29 0%, #030c14 100%); border: 1.5px solid rgba(6,182,212,0.5); box-shadow: 0 0 16px rgba(6,182,212,0.2), inset 0 1px 1px rgba(255,255,255,0.15); display: flex; align-items: center; justify-content: center; overflow: hidden;'>
+        <svg width='30' height='30' viewBox='0 0 100 100' fill='none' style='overflow: visible;'>
+          <defs>
+            <linearGradient id='surgeGrad' x1='0%' y1='0%' x2='100%' y2='100%'>
+              <stop offset='0%' stop-color='#00f2fe' stop-opacity='0.2'/>
+              <stop offset='50%' stop-color='#ffffff' stop-opacity='1'/>
+              <stop offset='100%' stop-color='#00f2fe' stop-opacity='0.2'/>
+            </linearGradient>
+            <filter id='electricGlow' x='-20%' y='-20%' width='140%' height='140%'>
+              <feGaussianBlur stdDeviation='3' result='blur'/>
+              <feMerge>
+                <feMergeNode in='blur'/>
+                <feMergeNode in='SourceGraphic'/>
+              </feMerge>
+            </filter>
+          </defs>
+          <!-- Base bolt -->
+          <path d='M 56 22 L 26 52 L 50 52 L 44 78 L 74 48 L 50 48 Z' fill='rgba(6,182,212,0.15)' stroke='#0284c7' stroke-width='5' stroke-linecap='round' stroke-linejoin='round' opacity='0.7'/>
+          <!-- Glowing static bolt -->
+          <path d='M 56 22 L 26 52 L 50 52 L 44 78 L 74 48 L 50 48 Z' fill='none' stroke='#22d3ee' stroke-width='4' stroke-linecap='round' stroke-linejoin='round' filter='url(#electricGlow)'/>
+          <!-- Electric current surge running along the path -->
+          <path class='bolt-surge' d='M 56 22 L 26 52 L 50 52 L 44 78 L 74 48 L 50 48 Z' fill='none' stroke='url(#surgeGrad)' stroke-width='4.5' stroke-linecap='round' stroke-linejoin='round'/>
+        </svg>
+      </div>
+
+      <!-- Corner Beacon Node -->
+      <div class='beacon-dot' style='position: absolute; top: -3px; right: -3px; width: 10px; height: 10px; border-radius: 50%; background: #00f2fe; border: 2px solid #030712;'></div>
+    </div>
+
+    <!-- Typography -->
+    <div>
+      <div style='display: flex; align-items: center; gap: 8px;'>
+        <span style='font-size: 19px; font-weight: 900; letter-spacing: 0.14em; color: #ffffff;'>MONORID</span>
+        <span style='font-size: 10px; font-family: monospace; font-weight: 700; color: #22d3ee; background: rgba(6,182,212,0.12); border: 1px solid rgba(6,182,212,0.4); padding: 2px 7px; border-radius: 5px;'>FUTURES v2.4</span>
+        <span style='font-size: 10px; font-family: monospace; font-weight: 700; color: #34d399; background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.4); padding: 2px 7px; border-radius: 5px; display: flex; align-items: center; gap: 4px;'>
+          <span style='width: 5px; height: 5px; border-radius: 50%; background: #34d399;'></span> 24/7 AUTO
+        </span>
+      </div>
+      <div style='font-size: 10px; font-family: monospace; color: #64748b; margin-top: 3px;'>
+        Trading Lifestyle Quant &bull; <span style='color: #22d3ee;'>MEXC 5M</span> &bull; IP: <span style='color: #cbd5e1;'>34.96.48.38</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

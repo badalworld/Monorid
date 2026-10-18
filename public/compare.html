@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { background: #030712; display: flex; gap: 20px; align-items: center; justify-content: center; height: 100vh; margin: 0; font-family: monospace; }
+.card { display: flex; flex-direction: column; align-items: center; gap: 8px; color: #94a3b8; }
+</style>
+</head>
+<body>
+  <div class='card'>
+    <span>Original</span>
+    <img src='logo-crop.png' style='height: 60px;'>
+  </div>
+  <div class='card'>
+    <span>Generated SVG</span>
+    <div style='position: relative; width: 56px; height: 56px;'>
+      <div style='position: absolute; inset: 0; border-radius: 16px; background: linear-gradient(180deg, #091c2b 0%, #040e17 100%); border: 1.5px solid rgba(6,182,212,0.55); box-shadow: 0 0 16px rgba(6,182,212,0.25); display: flex; align-items: center; justify-content: center;'>
+        <svg width='36' height='36' viewBox='0 0 100 100' fill='none'>
+          <path d='M 56 22 L 26 52 L 50 52 L 44 78 L 74 48 L 50 48 Z' fill='rgba(6,182,212,0.18)' stroke='#22d3ee' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/>
+        </svg>
+      </div>
+      <div style='position: absolute; top: -3px; right: -3px; width: 12px; height: 12px; border-radius: 50%; background: #00f2fe; border: 2px solid #030712; box-shadow: 0 0 8px #00f2fe;'></div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,6 @@
+{
+  "name": "Monorid - Autonomous MEXC Futures Quant Bot",
+  "description": "High-frequency autonomous MEXC Futures trading system engineered by Trading Lifestyle Quant with multi-asset volatility grouping and institutional liquidity sweep execution.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
