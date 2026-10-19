@@ -244,12 +244,12 @@ export async function fetchMexcKlines(symbol: string, limit: number = 60, interv
 
 const MEXC_CONTRACT_BASE = 'https://contract.mexc.com';
 
-/**
- * Fetch contract size (base-currency units per contract) for a symbol.
- * Public endpoint, no auth required. Needed to convert USDT notional
- * into MEXC order volume (which is denominated in contracts).
- */
+const contractSizeCache = new Map<string, number>();
+
 export async function fetchMexcContractSize(symbol: string): Promise<number | null> {
+  const cached = contractSizeCache.get(symbol);
+  if (cached) return cached;
+
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
@@ -262,7 +262,10 @@ export async function fetchMexcContractSize(symbol: string): Promise<number | nu
     if (res.ok) {
       const data = await res.json();
       const size = Number(data?.data?.contractSize);
-      if (data?.success && size > 0) return size;
+      if (data?.success && size > 0) {
+        contractSizeCache.set(symbol, size);
+        return size;
+      }
     }
   } catch (err) {
     console.warn(`[MEXC API] Contract detail fetch failed for ${symbol}:`, err);

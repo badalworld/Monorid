@@ -46,6 +46,8 @@ export default function Home() {
   const [logs, setLogs] = useState<TradeLog[]>([]);
   const [activeSignals, setActiveSignals] = useState<ActiveSignalItem[]>([]);
   const [isScanningBatch, setIsScanningBatch] = useState<boolean>(false);
+  const executingSymbolsRef = useRef<Set<string>>(new Set());
+  const lastAttemptRef = useRef<Map<string, number>>(new Map());
 
   // Chart Modal
   const [chartSymbol, setChartSymbol] = useState<string>('BTC_USDT');
@@ -234,13 +236,41 @@ export default function Home() {
                   emaFilterOK: item.analysis.emaFilterOK || false,
                   timestamp: Date.now(),
                   status: 'ACTIVE',
+                  retryCount: 0,
+                  analysis: item.analysis,
                 });
               }
             }
           }
 
           setScanResults((prev) => ({ ...prev, ...newResults }));
-          setActiveSignals(newSignals);
+
+          setActiveSignals((prevSignals) => {
+            const merged = new Map<string, ActiveSignalItem>();
+            for (const sig of prevSignals) {
+              if (sig.status === 'ACTIVE') merged.set(sig.symbol, sig);
+            }
+            for (const sig of newSignals) {
+              const existing = merged.get(sig.symbol);
+              if (existing) {
+                merged.set(sig.symbol, {
+                  ...sig,
+                  retryCount: existing.retryCount,
+                  id: existing.id,
+                  timestamp: existing.timestamp,
+                });
+              } else {
+                merged.set(sig.symbol, sig);
+              }
+            }
+            for (const [symbol, sig] of merged) {
+              const freshAnalysis = newResults[symbol];
+              if (freshAnalysis && freshAnalysis.action !== 'BUY' && freshAnalysis.action !== 'SELL') {
+                merged.delete(symbol);
+              }
+            }
+            return Array.from(merged.values());
+          });
         }
       }
     } catch (err) {
@@ -556,7 +586,7 @@ export default function Home() {
     side: 'BUY' | 'SELL',
     analysis: SignalResult,
     ticker?: MexcTicker
-  ) => {
+  ): Promise<boolean> => {
     if (equity <= 0) {
       addLog({
         groupName: ticker?.groupName || 'Risk Engine',
@@ -566,7 +596,7 @@ export default function Home() {
         price: ticker?.lastPrice || 0,
         message: `Trade on ${symbol} skipped: No MEXC account balance loaded. Add API credentials in Settings.`,
       });
-      return;
+      return false;
     }
 
     const tradePrice = analysis.entryPrice || ticker?.lastPrice || 100;
@@ -584,7 +614,7 @@ export default function Home() {
         price: tradePrice,
         message: `Trade on ${symbol} skipped: contract size unavailable from MEXC.`,
       });
-      return;
+      return false;
     }
     const contractVol = Math.floor((tradeEquity * lev) / (contractSize * tradePrice));
     if (contractVol < 1) {
@@ -596,8 +626,10 @@ export default function Home() {
         price: tradePrice,
         message: `Trade on ${symbol} skipped: notional below MEXC minimum contract size (needs ${Math.ceil((contractSize * tradePrice) / (lev || 1))}+ USDT margin).`,
       });
-      return;
+      return false;
     }
+
+    let tradePlaced = false;
 
     setPositions((currentPositions) => {
       const activeCount = currentPositions.filter((p) => p.status === 'OPEN').length;
@@ -701,20 +733,104 @@ export default function Home() {
         });
       }
 
+      tradePlaced = true;
       return [newPosition, ...currentPositions];
     });
+
+    return tradePlaced;
   }, [bots, equity, config, addLog, sendTelegramAlert, apiKey, secretKey]);
 
   // Auto-execute confirmed scanner signals while AUTO TRADING is enabled
+  const MAX_SIGNAL_RETRIES = 3;
+  const SIGNAL_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
+  const RETRY_COOLDOWN_MS = 25000; // 25s between retries (one scan cycle)
+
   useEffect(() => {
     if (!isAutoTrading || !apiKey || !secretKey) return;
+
+    const now = Date.now();
+    const toRemove = new Set<string>();
+    const toExecute: ActiveSignalItem[] = [];
+
     for (const sig of activeSignals) {
-      const analysis = scanResults[sig.symbol];
-      if (!analysis || (analysis.action !== 'BUY' && analysis.action !== 'SELL')) continue;
-      const ticker = tickers.find((t) => t.symbol === sig.symbol);
-      autoExecuteConfirmedTrade(sig.symbol, analysis.action, analysis, ticker);
+      if (sig.status !== 'ACTIVE') {
+        toRemove.add(sig.symbol);
+        continue;
+      }
+      if (sig.retryCount >= MAX_SIGNAL_RETRIES) {
+        toRemove.add(sig.symbol);
+        addLog({
+          groupName: sig.groupName,
+          symbol: sig.symbol,
+          type: 'SCAN_SIGNAL',
+          side: 'INFO',
+          price: sig.price,
+          message: `Trade on ${sig.symbol} failed after ${MAX_SIGNAL_RETRIES} retries. Signal removed.`,
+        });
+        continue;
+      }
+      if (now - sig.timestamp > SIGNAL_EXPIRY_MS) {
+        toRemove.add(sig.symbol);
+        addLog({
+          groupName: sig.groupName,
+          symbol: sig.symbol,
+          type: 'SCAN_SIGNAL',
+          side: 'INFO',
+          price: sig.price,
+          message: `Signal on ${sig.symbol} expired after ${Math.round((now - sig.timestamp) / 1000)}s (retries: ${sig.retryCount}/${MAX_SIGNAL_RETRIES}).`,
+        });
+        continue;
+      }
+      if (executingSymbolsRef.current.has(sig.symbol)) continue;
+
+      const lastAttempt = lastAttemptRef.current.get(sig.symbol) || 0;
+      if (now - lastAttempt < RETRY_COOLDOWN_MS) continue;
+
+      const analysis = sig.analysis || scanResults[sig.symbol];
+      if (!analysis || (analysis.action !== 'BUY' && analysis.action !== 'SELL')) {
+        toRemove.add(sig.symbol);
+        continue;
+      }
+
+      toExecute.push(sig);
     }
-  }, [activeSignals, isAutoTrading, scanResults, tickers, autoExecuteConfirmedTrade, apiKey, secretKey]);
+
+    if (toRemove.size > 0) {
+      setActiveSignals((prev) => prev.filter((s) => !toRemove.has(s.symbol)));
+    }
+
+    for (const sig of toExecute) {
+      executingSymbolsRef.current.add(sig.symbol);
+      lastAttemptRef.current.set(sig.symbol, now);
+      const ticker = tickers.find((t) => t.symbol === sig.symbol);
+      const analysis = sig.analysis || scanResults[sig.symbol];
+      if (!analysis || (analysis.action !== 'BUY' && analysis.action !== 'SELL')) {
+        executingSymbolsRef.current.delete(sig.symbol);
+        continue;
+      }
+
+      autoExecuteConfirmedTrade(sig.symbol, analysis.action, analysis, ticker)
+        .then((success) => {
+          if (success) {
+            setActiveSignals((prev) =>
+              prev.map((s) => s.symbol === sig.symbol ? { ...s, status: 'EXECUTED' as const } : s)
+            );
+            setTimeout(() => {
+              setActiveSignals((prev) => prev.filter((s) => s.symbol !== sig.symbol));
+            }, 2000);
+          } else {
+            setActiveSignals((prev) =>
+              prev.map((s) =>
+                s.symbol !== sig.symbol ? s : { ...s, retryCount: s.retryCount + 1 }
+              )
+            );
+          }
+        })
+        .finally(() => {
+          executingSymbolsRef.current.delete(sig.symbol);
+        });
+    }
+  }, [activeSignals, isAutoTrading, scanResults, tickers, autoExecuteConfirmedTrade, apiKey, secretKey, addLog]);
 
   // 4. Background Automated 24/7 Scanning Loop
   useEffect(() => {

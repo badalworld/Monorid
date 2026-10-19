@@ -20,6 +20,8 @@ export interface ActiveSignalItem {
   emaFilterOK: boolean;
   timestamp: number;
   status: 'ACTIVE' | 'EXECUTED';
+  retryCount: number;
+  analysis: SignalResult | null;
 }
 
 interface TradingSignalCardProps {
