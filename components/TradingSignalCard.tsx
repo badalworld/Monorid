@@ -16,7 +16,8 @@ export interface ActiveSignalItem {
   tp1: number;
   tp2: number;
   tp3: number;
-  volMult: number;
+  rsi: number;
+  emaFilterOK: boolean;
   timestamp: number;
   status: 'ACTIVE' | 'EXECUTED';
 }
@@ -118,7 +119,7 @@ export function TradingSignalCard({
           className="flex-1 py-1.5 px-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-[11px] font-mono text-slate-300 flex items-center justify-center gap-1 transition-colors"
         >
           <Eye className="w-3.5 h-3.5 text-cyan-400" />
-          <span>Inspect 5M Chart</span>
+          <span>Inspect 3M Chart</span>
         </button>
 
         <div className={`flex-1 py-1.5 px-2 rounded-lg text-[10px] font-mono font-bold flex items-center justify-center gap-1 border ${

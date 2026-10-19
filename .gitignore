@@ -3,5 +3,13 @@ node_modules/
 coverage/
 .DS_Store
 *.log
+*.tsbuildinfo
 .env*
 !.env.example
+.aistudio/
+.node-wrapper/
+start-dev.bat
+dev-err*.txt
+dev-out*.txt
+npm-err*.txt
+npm-out*.txt

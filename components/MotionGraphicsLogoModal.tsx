@@ -1,22 +1,15 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import {
   X,
   Play,
   Pause,
-  RotateCcw,
-  Sliders,
-  Eye,
-  Maximize2,
-  CheckCircle2,
   Sparkles,
   Layers,
   Compass,
-  Crosshair,
   TrendingUp,
-  Zap,
 } from 'lucide-react';
 
 interface MotionGraphicsLogoModalProps {
@@ -51,26 +44,24 @@ export function MotionGraphicsLogoModal({ isOpen, onClose }: MotionGraphicsLogoM
 
   if (!isOpen) return null;
 
-  // The 6 exact geometric vertices of the Monorid lightning bolt (full match to uploaded logo)
+  // Key geometric points of the Monorid logo (M shape + candlesticks)
   const vertices = [
-    { id: 'P1', x: 53.6, y: 21.2, tagX: 59, tagY: 15, label: 'Apex Top', angle: '63.4°' },
-    { id: 'P2', x: 24.8, y: 53.6, tagX: -2, tagY: 48, label: 'Left Flange', angle: '45.0°' },
-    { id: 'P3', x: 50.0, y: 53.6, tagX: 24, tagY: 60, label: 'Mid Ingress', angle: '0.0°' },
-    { id: 'P4', x: 46.4, y: 78.8, tagX: 18, tagY: 85, label: 'Apex Bottom', angle: '243.4°' },
-    { id: 'P5', x: 75.2, y: 46.4, tagX: 81, tagY: 43, label: 'Right Flange', angle: '225.0°' },
-    { id: 'P6', x: 50.0, y: 46.4, tagX: 55, tagY: 36, label: 'Mid Egress', angle: '180.0°' },
+    { id: 'P1', x: 30, y: 35, tagX: 5, tagY: 28, label: 'M Left Peak', angle: '45.0°' },
+    { id: 'P2', x: 50, y: 55, tagX: 52, tagY: 62, label: 'M Center Valley', angle: '0.0°' },
+    { id: 'P3', x: 70, y: 35, tagX: 75, tagY: 28, label: 'M Right Peak', angle: '135.0°' },
+    { id: 'P4', x: 75, y: 25, tagX: 80, tagY: 18, label: 'Candle 1 Top', angle: '90.0°' },
+    { id: 'P5', x: 82, y: 20, tagX: 87, tagY: 13, label: 'Candle 2 Top', angle: '90.0°' },
+    { id: 'P6', x: 89, y: 15, tagX: 94, tagY: 8, label: 'Candle 3 Top', angle: '90.0°' },
   ];
 
   return (
-    <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-2xl overflow-y-auto">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.94, y: 15 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.94, y: 15 }}
-          transition={{ duration: 0.28, ease: 'easeOut' }}
-          className="relative w-full max-w-5xl bg-[#030712] border border-cyan-500/40 rounded-3xl shadow-[0_0_60px_rgba(6,182,212,0.25)] flex flex-col overflow-hidden my-auto max-h-[95vh]"
-        >
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-2xl overflow-y-auto">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.94, y: 15 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ duration: 0.28, ease: 'easeOut' }}
+        className="relative w-full max-w-5xl bg-[#030712] border border-cyan-500/40 rounded-3xl shadow-[0_0_60px_rgba(6,182,212,0.25)] flex flex-col overflow-hidden my-auto max-h-[95vh]"
+      >
           {/* Top Title Bar with Quant Blueprint Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-cyan-900/50 bg-[#050e1c]/80 backdrop-blur-md">
             <div className="flex items-center gap-3">
@@ -127,9 +118,22 @@ export function MotionGraphicsLogoModal({ isOpen, onClose }: MotionGraphicsLogoM
 
               {/* Center Vector Motion Graphics Stage (Large crisp vector stage) */}
               <div className="relative w-80 h-80 sm:w-96 sm:h-96 md:w-[440px] md:h-[440px] flex items-center justify-center">
+                {/* Logo Image Base */}
+                <div className="absolute inset-0 flex items-center justify-center p-8">
+                  <motion.img
+                    src="/monorid-logo-full.png"
+                    alt="Monorid Logo"
+                    className="w-full h-full object-contain"
+                    style={{ objectPosition: 'center 30%' }}
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ duration: 0.8, ease: [0.34, 1.56, 0.64, 1] }}
+                  />
+                </div>
+
                 <svg
                   viewBox="-22 -22 144 144"
-                  className="w-full h-full overflow-visible drop-shadow-[0_0_35px_rgba(6,182,212,0.35)]"
+                  className="w-full h-full overflow-visible drop-shadow-[0_0_35px_rgba(6,182,212,0.35)] relative z-10"
                   xmlns="http://www.w3.org/2000/svg"
                 >
                   <defs>
@@ -244,10 +248,12 @@ export function MotionGraphicsLogoModal({ isOpen, onClose }: MotionGraphicsLogoM
                       />
 
                       {/* Vertex local tangent arcs (Compass Breakdown) */}
-                      <circle cx="53.6" cy="21.2" r="10" stroke="#00f2fe" strokeWidth="0.6" strokeDasharray="1.5 1.5" fill="none" />
-                      <circle cx="24.8" cy="53.6" r="10" stroke="#00f2fe" strokeWidth="0.6" strokeDasharray="1.5 1.5" fill="none" />
-                      <circle cx="46.4" cy="78.8" r="10" stroke="#00f2fe" strokeWidth="0.6" strokeDasharray="1.5 1.5" fill="none" />
-                      <circle cx="75.2" cy="46.4" r="10" stroke="#00f2fe" strokeWidth="0.6" strokeDasharray="1.5 1.5" fill="none" />
+                      <circle cx="30" cy="35" r="10" stroke="#00f2fe" strokeWidth="0.6" strokeDasharray="1.5 1.5" fill="none" />
+                      <circle cx="50" cy="55" r="10" stroke="#00f2fe" strokeWidth="0.6" strokeDasharray="1.5 1.5" fill="none" />
+                      <circle cx="70" cy="35" r="10" stroke="#00f2fe" strokeWidth="0.6" strokeDasharray="1.5 1.5" fill="none" />
+                      <circle cx="75" cy="25" r="10" stroke="#00f2fe" strokeWidth="0.6" strokeDasharray="1.5 1.5" fill="none" />
+                      <circle cx="82" cy="20" r="10" stroke="#00f2fe" strokeWidth="0.6" strokeDasharray="1.5 1.5" fill="none" />
+                      <circle cx="89" cy="15" r="10" stroke="#00f2fe" strokeWidth="0.6" strokeDasharray="1.5 1.5" fill="none" />
                     </g>
                   )}
 
@@ -264,42 +270,61 @@ export function MotionGraphicsLogoModal({ isOpen, onClose }: MotionGraphicsLogoM
                         strokeWidth="0.75"
                         strokeDasharray="4 2"
                       />
-                      {/* Diagonal Shearing Rays matching bolt angle */}
+                      {/* M Shape Connection Lines */}
                       <line
-                        x1="53.6"
-                        y1="21.2"
-                        x2="24.8"
-                        y2="53.6"
+                        x1="30"
+                        y1="35"
+                        x2="50"
+                        y2="55"
                         stroke="#38bdf8"
                         strokeWidth="0.8"
                         strokeDasharray="2 2"
                       />
                       <line
-                        x1="75.2"
-                        y1="46.4"
-                        x2="46.4"
-                        y2="78.8"
+                        x1="50"
+                        y1="55"
+                        x2="70"
+                        y2="35"
+                        stroke="#38bdf8"
+                        strokeWidth="0.8"
+                        strokeDasharray="2 2"
+                      />
+                      {/* Candlestick Vertical Guides */}
+                      <line
+                        x1="75"
+                        y1="25"
+                        x2="75"
+                        y2="55"
                         stroke="#38bdf8"
                         strokeWidth="0.8"
                         strokeDasharray="2 2"
                       />
                       <line
-                        x1="50.0"
-                        y1="46.4"
-                        x2="50.0"
-                        y2="53.6"
+                        x1="82"
+                        y1="20"
+                        x2="82"
+                        y2="55"
                         stroke="#38bdf8"
-                        strokeWidth="1.2"
+                        strokeWidth="0.8"
+                        strokeDasharray="2 2"
+                      />
+                      <line
+                        x1="89"
+                        y1="15"
+                        x2="89"
+                        y2="55"
+                        stroke="#38bdf8"
+                        strokeWidth="0.8"
+                        strokeDasharray="2 2"
                       />
 
-                      {/* Horizontal Step Alignment Guides */}
-                      <line x1="-15" y1="53.6" x2="115" y2="53.6" stroke="#0284c7" strokeWidth="0.6" strokeDasharray="2 3" opacity={0.5} />
-                      <line x1="-15" y1="46.4" x2="115" y2="46.4" stroke="#0284c7" strokeWidth="0.6" strokeDasharray="2 3" opacity={0.5} />
+                      {/* Horizontal Base Alignment Guide */}
+                      <line x1="-15" y1="55" x2="115" y2="55" stroke="#0284c7" strokeWidth="0.6" strokeDasharray="2 3" opacity={0.5} />
 
-                      {/* Angle arc callout at Apex */}
-                      <path d="M 53.6 29 A 8 8 0 0 1 45.6 25" fill="none" stroke="#22d3ee" strokeWidth="0.8" />
-                      <text x="37" y="23" fill="#38bdf8" fontSize="4.5" fontFamily="monospace">
-                        θ=63.4°
+                      {/* Angle arc callout at M Left Peak */}
+                      <path d="M 30 43 A 8 8 0 0 1 38 39" fill="none" stroke="#22d3ee" strokeWidth="0.8" />
+                      <text x="30" y="37" fill="#38bdf8" fontSize="4.5" fontFamily="monospace">
+                        θ=45°
                       </text>
                     </g>
                   )}
@@ -365,59 +390,70 @@ export function MotionGraphicsLogoModal({ isOpen, onClose }: MotionGraphicsLogoM
                   {/* LAYER 5: SOLID EMBLEM / HARMONIC KINETIC SURGE (Miro Motion Graphics) */}
                   {showSolidEmblem && (
                     <g>
-                      {/* Ambient Bloom Backdrop */}
+                      {/* Ambient Bloom Backdrop - M Shape */}
                       <path
-                        d="M 53.6 21.2 L 24.8 53.6 L 50.0 53.6 L 46.4 78.8 L 75.2 46.4 L 50.0 46.4 Z"
-                        fill="#00f2fe"
-                        opacity={0.25}
+                        d="M 30 35 L 50 55 L 70 35"
+                        fill="none"
+                        stroke="#00f2fe"
+                        strokeWidth="8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        opacity={0.2}
                         filter="url(#vectorNeonGlow)"
                       />
 
-                      {/* Miro Harmonic Ribbon Wave 1 (Subtle Cyan Undulation) */}
+                      {/* Miro Harmonic Ribbon Wave (Subtle Cyan Undulation) */}
                       {isPlaying && (
                         <motion.path
-                          d="M 53.6 21.2 L 24.8 53.6 L 50.0 53.6 L 46.4 78.8 L 75.2 46.4 L 50.0 46.4 Z"
-                          fill="url(#miroRibbon1)"
+                          d="M 30 35 L 50 55 L 70 35"
+                          fill="none"
+                          stroke="url(#miroRibbon1)"
+                          strokeWidth="6"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
                           animate={{
                             opacity: [0.3, 0.7, 0.3],
-                            scale: [1, 1.025, 1],
                           }}
                           transition={{
                             duration: 3.2 / playbackSpeed,
                             repeat: Infinity,
                             ease: 'easeInOut',
                           }}
-                          style={{ transformOrigin: '50px 50px' }}
                         />
                       )}
 
-                      {/* Solid Electric Core Fill */}
+                      {/* Solid Electric Core - M Shape */}
                       <path
-                        d="M 53.6 21.2 L 24.8 53.6 L 50.0 53.6 L 46.4 78.8 L 75.2 46.4 L 50.0 46.4 Z"
-                        fill="rgba(6, 182, 212, 0.22)"
-                        stroke="#0284c7"
-                        strokeWidth="3.5"
+                        d="M 30 35 L 50 55 L 70 35"
+                        fill="none"
+                        stroke="rgba(6, 182, 212, 0.4)"
+                        strokeWidth="5"
                         strokeLinecap="round"
                         strokeLinejoin="round"
                       />
 
-                      {/* Crisp Electric Neon Outline */}
+                      {/* Crisp Electric Neon Outline - M Shape */}
                       <path
-                        d="M 53.6 21.2 L 24.8 53.6 L 50.0 53.6 L 46.4 78.8 L 75.2 46.4 L 50.0 46.4 Z"
+                        d="M 30 35 L 50 55 L 70 35"
                         fill="none"
                         stroke="url(#gridBreakdownNeon)"
-                        strokeWidth="2.8"
+                        strokeWidth="3"
                         strokeLinecap="round"
                         strokeLinejoin="round"
                         filter="url(#vectorNeonGlow)"
                       />
+
+                      {/* Candlestick Bars Glow */}
+                      <line x1="75" y1="25" x2="75" y2="50" stroke="#00f2fe" strokeWidth="4" strokeLinecap="round" opacity={0.3} filter="url(#vectorNeonGlow)" />
+                      <line x1="82" y1="20" x2="82" y2="50" stroke="#00f2fe" strokeWidth="4" strokeLinecap="round" opacity={0.3} filter="url(#vectorNeonGlow)" />
+                      <line x1="89" y1="15" x2="89" y2="50" stroke="#00f2fe" strokeWidth="4" strokeLinecap="round" opacity={0.3} filter="url(#vectorNeonGlow)" />
                     </g>
                   )}
 
                   {/* LAYER 6: KINETIC LASER PATH TRACER (Draws along vertices in sync) */}
                   {isPlaying && (
                     <motion.path
-                      d="M 53.6 21.2 L 24.8 53.6 L 50.0 53.6 L 46.4 78.8 L 75.2 46.4 L 50.0 46.4 Z"
+                      d="M 30 35 L 50 55 L 70 35 M 75 25 L 75 50 M 82 20 L 82 50 M 89 15 L 89 50"
                       fill="none"
                       stroke="url(#laserPulseGrad)"
                       strokeWidth="3.6"
@@ -497,11 +533,11 @@ export function MotionGraphicsLogoModal({ isOpen, onClose }: MotionGraphicsLogoM
               {/* Bottom Quick-Status Telemetry inside viewport */}
               <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between text-[11px] font-mono text-slate-400 bg-slate-950/80 border border-slate-800/80 rounded-xl px-3.5 py-1.5 backdrop-blur-md">
                 <div className="flex items-center gap-3">
-                  <span className="text-cyan-400 font-bold">180° ROTATIONAL SYMMETRY</span>
+                  <span className="text-cyan-400 font-bold">M-SHAPE SYMMETRY</span>
                   <span className="text-slate-600">•</span>
                   <span>6 VECTOR NODES</span>
                   <span className="text-slate-600">•</span>
-                  <span className="text-emerald-400">GOLDEN RATIO φ=1.618 STEPS</span>
+                  <span className="text-emerald-400">CANDLESTICK INTEGRATION</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-slate-500">SPEED:</span>
@@ -670,16 +706,16 @@ export function MotionGraphicsLogoModal({ isOpen, onClose }: MotionGraphicsLogoM
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-300">
                   <div>
-                    <span className="text-slate-500 block">Symmetry</span>
-                    <span className="font-semibold text-white">C2 Rotational (180°)</span>
+                    <span className="text-slate-500 block">M Shape</span>
+                    <span className="font-semibold text-white">Bilateral Symmetry</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 block">Bolt Shear</span>
-                    <span className="font-semibold text-white">θ = 63.4° (2:1 slope)</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">Flange Ingress</span>
+                    <span className="text-slate-500 block">Peak Angle</span>
                     <span className="font-semibold text-white">θ = 45.0° (1:1 slope)</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Candlesticks</span>
+                    <span className="font-semibold text-white">3 Bars Ascending</span>
                   </div>
                   <div>
                     <span className="text-slate-500 block">Aspect Ratio</span>
@@ -699,6 +735,5 @@ export function MotionGraphicsLogoModal({ isOpen, onClose }: MotionGraphicsLogoM
           </div>
         </motion.div>
       </div>
-    </AnimatePresence>
   );
 }

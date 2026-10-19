@@ -6,17 +6,14 @@ import {
   Play,
   Pause,
   AlertTriangle,
-  Compass,
 } from 'lucide-react';
-import { MonoridLogo } from './MonoridLogo';
+import { MiroStyleLogo } from './MiroStyleLogo';
 
 interface HeaderProps {
   activeTab: 'dashboard' | 'scanner' | 'positions' | 'logs' | 'settings';
   setActiveTab: (tab: 'dashboard' | 'scanner' | 'positions' | 'logs' | 'settings') => void;
   isAutoTrading: boolean;
   setIsAutoTrading: React.Dispatch<React.SetStateAction<boolean>>;
-  isLiveMode: boolean;
-  setIsLiveMode: (live: boolean) => void;
   equity: number;
   todayPnl: number;
   openPositionsCount: number;
@@ -31,8 +28,6 @@ export function Header({
   setActiveTab,
   isAutoTrading,
   setIsAutoTrading,
-  isLiveMode,
-  setIsLiveMode,
   equity,
   todayPnl,
   openPositionsCount,
@@ -42,7 +37,8 @@ export function Header({
   onOpenGridBreakdown,
 }: HeaderProps) {
   const [copiedIp, setCopiedIp] = useState(false);
-  const pnlPercent = equity > 0 ? (todayPnl / (equity - todayPnl)) * 100 : 0;
+  const pnlDenominator = equity - todayPnl;
+  const pnlPercent = pnlDenominator !== 0 ? (todayPnl / pnlDenominator) * 100 : 0;
   const isPnlPositive = todayPnl >= 0;
 
   const handleCopyIp = () => {
@@ -56,20 +52,52 @@ export function Header({
   return (
     <header className="border-b border-cyan-950/70 bg-[#050914]/95 backdrop-blur-xl sticky top-0 z-40 px-3 sm:px-5 lg:px-7 py-3">
       <div className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3.5">
-        {/* Brand Zone: Authentic Monorid Electric Motion Logo & Subtitle */}
+        {/* Brand Zone: Miro-Style Motion Graphics Logo & Subtitle */}
         <div className="flex flex-wrap items-center justify-between sm:justify-start gap-4">
-          <MonoridLogo
-            size="md"
-            showText={true}
-            showSubtitle={true}
-            showBadges={true}
-            showBreakdownBadge={true}
-            animated={true}
-            serverIp={serverIp}
-            onCopyIp={handleCopyIp}
-            copiedIp={copiedIp}
-            onOpenGridBreakdown={onOpenGridBreakdown}
-          />
+          <div className="flex items-center gap-3">
+            <MiroStyleLogo
+              size="md"
+              animated={true}
+              onClick={onOpenGridBreakdown}
+            />
+
+            {/* Typography & Badges */}
+            <div className="flex flex-col justify-center min-w-0">
+              <div className="flex items-center flex-wrap gap-2">
+                <h1 className="font-black tracking-[0.14em] text-white text-lg leading-tight font-sans">
+                  MONORID
+                </h1>
+
+                <span className="font-mono font-bold text-cyan-400 bg-cyan-950/40 border border-cyan-500/40 rounded text-[10px] px-2 py-0.5 tracking-wide shadow-[0_0_8px_rgba(6,182,212,0.15)]">
+                  FUTURES v2.4
+                </span>
+
+                <span className="font-mono font-medium text-emerald-400 bg-emerald-950/40 border border-emerald-500/40 rounded text-[10px] px-2 py-0.5 tracking-wide flex items-center gap-1.5 shadow-[0_0_8px_rgba(16,185,129,0.15)]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  24/7 AUTO
+                </span>
+              </div>
+
+              <div className="font-mono text-slate-400 text-[10px] tracking-tight mt-0.5 flex items-center flex-wrap gap-1.5">
+                <span className="text-slate-300">Trading Lifestyle Quant</span>
+                <span className="text-slate-600">•</span>
+                <span className="text-cyan-400 font-semibold">MEXC 3M</span>
+                <span className="text-slate-600">•</span>
+                <span className="flex items-center gap-1 text-slate-300">
+                  IP: <span className="font-semibold text-slate-200">{serverIp}</span>
+                   
+                    <button
+                      onClick={handleCopyIp}
+                      title="Copy IP"
+                      className="ml-0.5 text-slate-400 hover:text-cyan-300 transition-colors cursor-pointer"
+                    >
+                      {copiedIp ? '✓' : '⧉'}
+                    </button>
+
+                </span>
+              </div>
+            </div>
+          </div>
 
           {/* Navigation Tabs (Smooth horizontal scrolling) */}
           <nav className="flex items-center gap-1 bg-slate-900/80 p-1 rounded-xl border border-slate-800/80 overflow-x-auto max-w-full">
@@ -140,30 +168,6 @@ export function Header({
                 </span>
               </span>
             </div>
-          </div>
-
-          {/* Mode Switch: Simulation vs MEXC Live */}
-          <div className="flex items-center rounded-xl border border-slate-800 bg-slate-950 p-1 text-xs font-mono">
-            <button
-              onClick={() => setIsLiveMode(false)}
-              className={`px-3 py-1 rounded-lg transition-colors text-xs font-semibold ${
-                !isLiveMode
-                  ? 'bg-cyan-600/30 text-cyan-300 font-bold border border-cyan-500/50 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Simulation
-            </button>
-            <button
-              onClick={() => setIsLiveMode(true)}
-              className={`px-3 py-1 rounded-lg transition-colors text-xs font-semibold ${
-                isLiveMode
-                  ? 'bg-emerald-600/30 text-emerald-300 font-bold border border-emerald-500/50 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              MEXC Live
-            </button>
           </div>
 
           {/* Master 24/7 Automation Switch */}

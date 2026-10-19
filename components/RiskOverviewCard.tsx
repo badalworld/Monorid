@@ -28,7 +28,7 @@ export function RiskOverviewCard({
   const strokeDashoffset = circumference - (marginPct / 100) * circumference;
 
   return (
-    <div className="rounded-xl border border-cyan-950/70 bg-[#060a14]/90 p-3.5 backdrop-blur-md">
+    <div className="h-full rounded-xl border border-cyan-950/70 bg-[#060a14]/90 p-3.5 backdrop-blur-md">
       <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-2.5">
         <div className="flex items-center gap-2">
           <ShieldAlert className="w-4 h-4 text-cyan-400" />

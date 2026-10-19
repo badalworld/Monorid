@@ -118,14 +118,14 @@ export function CandleChartModal({
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-mono font-black text-white">{symbol}</h3>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800">
-                  5-MIN CANDLES
+                  3-MIN CANDLES
                 </span>
                 <span className="text-xs font-mono font-bold text-emerald-400">
                   ${lastPrice < 0.01 ? lastPrice.toFixed(6) : lastPrice.toLocaleString()}
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 font-mono">
-                Trading Lifestyle Quant Engine • Real-time Liquidity Sweep Execution
+                Trading Lifestyle Quant Engine • CRUDE OIL Signal Execution (EMA 200 Filter)
               </p>
             </div>
           </div>
@@ -141,20 +141,24 @@ export function CandleChartModal({
         {/* Quant Telemetry Banner */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 my-3 p-2.5 rounded-xl bg-slate-950/80 border border-slate-850 text-xs font-mono">
           <div>
-            <span className="text-[10px] text-slate-500 block">POOLS ABOVE</span>
-            <span className="text-rose-400 font-bold">{analysis?.highPoolsCount ?? 0} Unswept Rails</span>
+            <span className="text-[10px] text-slate-500 block">RSI</span>
+            <span className={`font-bold ${
+              (analysis?.rsi ?? 50) > 70 ? 'text-rose-400' : (analysis?.rsi ?? 50) < 30 ? 'text-emerald-400' : 'text-white'
+            }`}>{analysis?.rsi?.toFixed(1) ?? '50.0'}</span>
           </div>
           <div>
-            <span className="text-[10px] text-slate-500 block">POOLS BELOW</span>
-            <span className="text-cyan-400 font-bold">{analysis?.lowPoolsCount ?? 0} Unswept Rails</span>
+            <span className="text-[10px] text-slate-500 block">SMA 70</span>
+            <span className="text-cyan-400 font-bold">${analysis?.sma?.toFixed(2) ?? '—'}</span>
           </div>
           <div>
-            <span className="text-[10px] text-slate-500 block">VOLUME PULSE</span>
-            <span className="text-emerald-400 font-bold">{analysis?.volMultiplier ?? 1.2}x Expansion</span>
+            <span className="text-[10px] text-slate-500 block">EMA 200</span>
+            <span className="text-emerald-400 font-bold">${analysis?.ema?.toFixed(2) ?? '—'}</span>
           </div>
           <div>
-            <span className="text-[10px] text-slate-500 block">LEVERAGE / SIZING</span>
-            <span className="text-white font-bold">{analysis?.recommendedLeverage ?? 12}x • 10% Equity</span>
+            <span className="text-[10px] text-slate-500 block">EMA FILTER</span>
+            <span className={`font-bold ${analysis?.emaFilterOK ? 'text-emerald-400' : 'text-slate-400'}`}>
+              {analysis?.emaFilterOK ? '✓ CONFIRMED' : '✗ FILTERED'}
+            </span>
           </div>
         </div>
 

@@ -1,47 +1,70 @@
 'use client';
 
 import React from 'react';
-import { Layers, ArrowUpRight, ArrowDownRight, Shield, Target, XCircle, CheckCircle2 } from 'lucide-react';
+import { Layers, ArrowUpRight, ArrowDownRight, Shield, Target, XCircle, CheckCircle2, X } from 'lucide-react';
 import { MexcPosition } from '@/lib/mexc';
 
 interface PositionsViewProps {
   positions: MexcPosition[];
   onClosePosition: (id: string) => void;
   onViewChart: (symbol: string) => void;
+  filterBotId?: string | null;
+  filterBotName?: string;
+  onClearBotFilter?: () => void;
 }
 
 export function PositionsView({
   positions,
   onClosePosition,
   onViewChart,
+  filterBotId,
+  filterBotName,
+  onClearBotFilter,
 }: PositionsViewProps) {
-  const openPositions = positions.filter((p) => p.status === 'OPEN');
-  const closedPositions = positions.filter((p) => p.status === 'CLOSED');
+  const scopedPositions = filterBotId
+    ? positions.filter((p) => p.botId === filterBotId)
+    : positions;
+  const openPositions = scopedPositions.filter((p) => p.status === 'OPEN');
+  const cleanBotName = filterBotName?.replace('Monorid ', '');
 
   return (
     <div className="space-y-4">
       {/* Header Banner */}
       <div className="rounded-xl border border-cyan-950/70 bg-[#060a14]/90 p-4 backdrop-blur-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Layers className="w-5 h-5 text-cyan-400" />
             <h2 className="text-base font-mono font-bold text-white tracking-wide">
-              AUTONOMOUS FUTURES POSITIONS & TP PROGRESS
+              {filterBotId && cleanBotName
+                ? `BOT WORKSPACE: ${cleanBotName.toUpperCase()}`
+                : 'AUTONOMOUS FUTURES POSITIONS & TP PROGRESS'}
             </h2>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-700/60 font-semibold">
-              MAX 8 POSITIONS TOGETHER
-            </span>
+            {filterBotId ? (
+              <button
+                onClick={onClearBotFilter}
+                className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-700/60 font-semibold flex items-center gap-1 hover:bg-cyan-900 hover:text-white transition-colors"
+              >
+                <X className="w-3 h-3" />
+                SHOW ALL BOTS
+              </button>
+            ) : (
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-700/60 font-semibold">
+                MAX 8 POSITIONS TOGETHER
+              </span>
+            )}
           </div>
           <p className="text-xs text-slate-400 font-mono mt-0.5">
-            Full automatic scaling: 25% closed at TP1 (SL to BE), 50% closed at TP2, remaining 100% full exit at TP3.
+            {filterBotId
+              ? `Live trades opened by ${cleanBotName || 'this bot'}. Full automatic scaling: 25% closed at TP1 (SL to BE), 50% at TP2, full exit at TP3.`
+              : 'Full automatic scaling: 25% closed at TP1 (SL to BE), 50% closed at TP2, remaining 100% full exit at TP3.'}
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           <div className="px-3.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs font-mono flex items-center gap-2">
-            <span className="text-slate-400">Slots Used: </span>
+            <span className="text-slate-400">{filterBotId ? 'Bot Trades: ' : 'Slots Used: '}</span>
             <span className={`font-black text-sm ${openPositions.length >= 8 ? 'text-amber-400' : 'text-emerald-400'}`}>
-              {openPositions.length} / 8 ACTIVE
+              {filterBotId ? `${openPositions.length} OPEN` : `${openPositions.length} / 8 ACTIVE`}
             </span>
           </div>
         </div>
@@ -51,10 +74,23 @@ export function PositionsView({
       {openPositions.length === 0 ? (
         <div className="rounded-xl border border-slate-800/80 bg-[#070c17]/90 p-10 text-center text-slate-400 font-mono">
           <Layers className="w-10 h-10 text-slate-600 mx-auto mb-2" />
-          <p className="text-sm font-semibold text-slate-300">All 8 Automated Slots Available</p>
-          <p className="text-xs text-slate-500 mt-1">
-            8 autonomous bots are actively monitoring 75 contracts across 5 volatility tiers for 5-minute liquidity sweeps.
-          </p>
+          {filterBotId ? (
+            <>
+              <p className="text-sm font-semibold text-slate-300">
+                No Live Trades for {cleanBotName || 'This Bot'} Yet
+              </p>
+              <p className="text-xs text-slate-500 mt-1">
+                This bot is scanning 75 contracts on 3-minute candles for CRUDE OIL BUY/SELL signals with EMA 200 filter. It will open a trade automatically when a signal confirms.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm font-semibold text-slate-300">All 8 Automated Slots Available</p>
+              <p className="text-xs text-slate-500 mt-1">
+                8 autonomous bots are actively monitoring 75 contracts across 5 volatility tiers for CRUDE OIL BUY/SELL signals with EMA 200 filter.
+              </p>
+            </>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">

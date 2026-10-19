@@ -338,53 +338,51 @@ export function SettingsModal({
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Pivot Length</label>
+                <label className="text-[10px] text-slate-400 block mb-1">SMA Length</label>
                 <input
                   type="number"
-                  value={config.pivotLen}
-                  onChange={(e) => setConfig({ ...config, pivotLen: Number(e.target.value) || 8 })}
+                  value={config.smaLength}
+                  onChange={(e) => setConfig({ ...config, smaLength: Number(e.target.value) || 70 })}
                   className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-white font-bold"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Confirm Window</label>
+                <label className="text-[10px] text-slate-400 block mb-1">RSI Length</label>
                 <input
                   type="number"
-                  value={config.confirmWindow}
-                  onChange={(e) => setConfig({ ...config, confirmWindow: Number(e.target.value) || 3 })}
+                  value={config.rsiLength}
+                  onChange={(e) => setConfig({ ...config, rsiLength: Number(e.target.value) || 14 })}
                   className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-white"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Min Wick %</label>
+                <label className="text-[10px] text-slate-400 block mb-1">RSI Higher</label>
                 <input
                   type="number"
-                  value={config.minWickPct}
-                  onChange={(e) => setConfig({ ...config, minWickPct: Number(e.target.value) || 25 })}
+                  value={config.rsiHigher}
+                  onChange={(e) => setConfig({ ...config, rsiHigher: Number(e.target.value) || 80 })}
                   className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-white"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">SL ATR Multiplier</label>
+                <label className="text-[10px] text-slate-400 block mb-1">RSI Lower</label>
                 <input
                   type="number"
-                  step="0.1"
-                  value={config.slAtrMult}
-                  onChange={(e) => setConfig({ ...config, slAtrMult: Number(e.target.value) || 1.5 })}
+                  value={config.rsiLower}
+                  onChange={(e) => setConfig({ ...config, rsiLower: Number(e.target.value) || 20 })}
                   className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-white"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Vol Multiplier Req</label>
+                <label className="text-[10px] text-slate-400 block mb-1">EMA Length</label>
                 <input
                   type="number"
-                  step="0.1"
-                  value={config.volMultReq}
-                  onChange={(e) => setConfig({ ...config, volMultReq: Number(e.target.value) || 1.1 })}
+                  value={config.emaLength}
+                  onChange={(e) => setConfig({ ...config, emaLength: Number(e.target.value) || 200 })}
                   className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-white"
                 />
               </div>

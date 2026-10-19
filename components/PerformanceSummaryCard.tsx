@@ -35,7 +35,7 @@ export function PerformanceSummaryCard({
   const areaD = `${pathD} L 240 50 L 0 50 Z`;
 
   return (
-    <div className="rounded-xl border border-cyan-950/70 bg-[#060a14]/90 p-3.5 backdrop-blur-md">
+    <div className="h-full flex flex-col rounded-xl border border-cyan-950/70 bg-[#060a14]/90 p-3.5 backdrop-blur-md">
       <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-2.5">
         <div className="flex items-center gap-2">
           <TrendingUp className="w-4 h-4 text-emerald-400" />
@@ -68,7 +68,7 @@ export function PerformanceSummaryCard({
       </div>
 
       {/* Mini Glowing Equity Graph */}
-      <div className="relative w-full h-14 bg-slate-950/80 rounded-lg p-1 border border-slate-850 overflow-hidden mb-2.5">
+      <div className="relative w-full flex-1 min-h-14 bg-slate-950/80 rounded-lg p-1 border border-slate-850 overflow-hidden mb-2.5">
         <svg className="w-full h-full" viewBox="0 0 240 50" preserveAspectRatio="none">
           <defs>
             <linearGradient id="pnlGrad" x1="0" y1="0" x2="0" y2="1">

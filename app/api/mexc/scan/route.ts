@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchMexcKlines, fetchMexcFuturesTickers } from '@/lib/mexc';
-import { analyzeLiquidityReaper, DEFAULT_CONFIG, StrategyConfig } from '@/lib/strategy';
+import { analyzeCrudeOilStrategy, aggregateCandles, DEFAULT_CONFIG, StrategyConfig } from '@/lib/strategy';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,34 +12,40 @@ export async function POST(req: NextRequest) {
 
     let targetSymbols = symbols;
     if (!targetSymbols || targetSymbols.length === 0) {
-      // Default to scanning top volatile symbols from market
       const tickers = await fetchMexcFuturesTickers();
       targetSymbols = tickers.slice(0, 15).map((t) => t.symbol);
     }
 
-    // Limit batch scan to 15 concurrent to prevent MEXC API rate limits
-    const batch = targetSymbols.slice(0, 15);
+    const batch = targetSymbols.slice(0, 8);
 
-    const scanResults = await Promise.all(
-      batch.map(async (symbol) => {
-        try {
-          const klines = await fetchMexcKlines(symbol, 75);
-          const analysis = analyzeLiquidityReaper(klines, config);
-          return {
-            symbol,
-            success: true,
-            analysis,
-            candles: klines.slice(-30), // recent candles for chart preview
-          };
-        } catch (err: any) {
-          return {
+    const scanResults: any[] = [];
+    for (const symbol of batch) {
+      try {
+        const klines1m = await fetchMexcKlines(symbol, 630, 'Min1');
+        if (klines1m.length < 60) {
+          scanResults.push({
             symbol,
             success: false,
-            error: err?.message || 'Scan error',
-          };
+            error: `Insufficient candle data for ${symbol} (${klines1m.length} bars)`,
+          });
+          continue;
         }
-      })
-    );
+        const klines = aggregateCandles(klines1m, 3);
+        const analysis = analyzeCrudeOilStrategy(klines, config);
+        scanResults.push({
+          symbol,
+          success: true,
+          analysis,
+          candles: klines.slice(-30),
+        });
+      } catch (err: any) {
+        scanResults.push({
+          symbol,
+          success: false,
+          error: err?.message || 'Scan error',
+        });
+      }
+    }
 
     return NextResponse.json({
       success: true,

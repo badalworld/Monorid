@@ -30,6 +30,47 @@
   background: radial-gradient(circle at 50% 30%, rgba(6, 182, 212, 0.15) 0%, rgba(15, 23, 42, 0) 70%);
 }
 
+/* Neon moving-light border ring (conic light traveling around the card edge) */
+@property --neon-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes neon-border-spin {
+  to { --neon-angle: 360deg; }
+}
+
+.neon-border {
+  position: relative;
+}
+
+.neon-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--neon-angle),
+    transparent 0deg,
+    var(--neon-color) 38deg,
+    #ffffff 52deg,
+    var(--neon-color) 66deg,
+    transparent 112deg
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  animation: neon-border-spin 3s linear infinite;
+  pointer-events: none;
+}
+
+.neon-normal { --neon-color: #4169e1; }  /* royal blue */
+.neon-buy    { --neon-color: #10b981; }  /* green */
+.neon-sell   { --neon-color: #f43f5e; }  /* red */
+
 /* Custom scrollbars for cyber terminal */
 ::-webkit-scrollbar {
   width: 6px;

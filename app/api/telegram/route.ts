@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
         `━━━━━━━━━━━━━━━━━━━━`;
     } else if (type === 'ENTRY') {
       const isLong = side === 'LONG';
-      const icon = isLong ? '🟢 <b>[BUY RAID CONFIRMED]</b>' : '🔴 <b>[SELL RAID CONFIRMED]</b>';
+      const icon = isLong ? '🟢 <b>[CRUDE OIL BUY CONFIRMED]</b>' : '🔴 <b>[CRUDE OIL SELL CONFIRMED]</b>';
       message = `${icon}\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
         `• <b>Bot:</b> Monorid Quant Core\n` +

@@ -3,9 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Header } from '@/components/Header';
 import { BotConstellation, BotUnit } from '@/components/BotConstellation';
-import { MarketDataFeed } from '@/components/MarketDataFeed';
-import { TradingSignalCard, ActiveSignalItem } from '@/components/TradingSignalCard';
-import { SystemStatusCard } from '@/components/SystemStatusCard';
+import { ActiveSignalItem } from '@/components/TradingSignalCard';
 import { RiskOverviewCard } from '@/components/RiskOverviewCard';
 import { PerformanceSummaryCard } from '@/components/PerformanceSummaryCard';
 import { MarketScanner } from '@/components/MarketScanner';
@@ -19,22 +17,19 @@ import {
   MexcPosition,
   TradeLog,
   ASSET_GROUPS,
-  generateCuratedMarketData,
   OFFICIAL_BOT_UNITS,
   MAX_OPEN_POSITIONS,
+  fetchMexcContractSize,
 } from '@/lib/mexc';
-import { StrategyConfig, DEFAULT_CONFIG, SignalResult, Candle, calculatePositionExitQuantity } from '@/lib/strategy';
-import { Zap, Radio, Activity, Cpu, ArrowUpRight, ArrowDownRight, Layers, Sliders, ExternalLink } from 'lucide-react';
+import { mexcWs } from '@/lib/mexc-ws';
+import { StrategyConfig, DEFAULT_CONFIG, SignalResult, Candle } from '@/lib/strategy';
 
 export default function Home() {
   // Navigation & State
   const [activeTab, setActiveTab] = useState<'dashboard' | 'scanner' | 'positions' | 'logs' | 'settings'>('dashboard');
   const [isAutoTrading, setIsAutoTrading] = useState<boolean>(true);
-  const [isLiveMode, setIsLiveMode] = useState<boolean>(false);
-  const [equity, setEquity] = useState<number>(10000.0);
-  const [todayPnl, setTodayPnl] = useState<number>(1835.40);
+  const [equity, setEquity] = useState<number>(0);
   const [serverIp, setServerIp] = useState<string>('Detecting...');
-  const [latencyMs, setLatencyMs] = useState<number>(34);
 
   // Settings
   const [apiKey, setApiKey] = useState<string>('');
@@ -46,7 +41,6 @@ export default function Home() {
 
   // Market & Trading State
   const [tickers, setTickers] = useState<MexcTicker[]>([]);
-  const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC_USDT');
   const [scanResults, setScanResults] = useState<Record<string, SignalResult>>({});
   const [positions, setPositions] = useState<MexcPosition[]>([]);
   const [logs, setLogs] = useState<TradeLog[]>([]);
@@ -68,6 +62,61 @@ export default function Home() {
     activeSignalsCount: 2,
   })));
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
+  const [viewBotId, setViewBotId] = useState<string | null>(null);
+
+  // Sync bot PnL and status from real position data
+  useEffect(() => {
+    setBots((prevBots) =>
+      prevBots.map((bot) => {
+        const botPositions = positions.filter((p) => p.botId === bot.id);
+        const botPnl = botPositions.reduce((sum, p) => sum + p.realizedPnl + p.unrealizedPnl, 0);
+        const hasOpen = botPositions.some((p) => p.status === 'OPEN');
+        return {
+          ...bot,
+          pnl: Number(botPnl.toFixed(2)),
+          status: hasOpen ? ('HOLDING' as const) : ('ACTIVE' as const),
+          currentSymbol: hasOpen ? botPositions.find((p) => p.status === 'OPEN')?.symbol : undefined,
+          tradesCount: botPositions.length,
+        };
+      })
+    );
+  }, [positions]);
+
+  // Restore persisted credentials & settings (auto-saved on change below)
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
+  useEffect(() => {
+    try {
+      const savedApiKey = localStorage.getItem('monorid-api-key');
+      const savedSecretKey = localStorage.getItem('monorid-secret-key');
+      const savedTelegramToken = localStorage.getItem('monorid-telegram-token');
+      const savedTelegramChatId = localStorage.getItem('monorid-telegram-chat');
+      const savedConfig = localStorage.getItem('monorid-config');
+      if (savedApiKey) setApiKey(savedApiKey);
+      if (savedSecretKey) setSecretKey(savedSecretKey);
+      if (savedTelegramToken) setTelegramToken(savedTelegramToken);
+      if (savedTelegramChatId) setTelegramChatId(savedTelegramChatId);
+      if (savedConfig) {
+        setConfig({ ...DEFAULT_CONFIG, ...JSON.parse(savedConfig) });
+      }
+    } catch {
+      // localStorage unavailable
+    }
+    setSettingsHydrated(true);
+  }, []);
+
+  // Auto-save credentials & settings whenever they change
+  useEffect(() => {
+    if (!settingsHydrated) return;
+    try {
+      localStorage.setItem('monorid-api-key', apiKey);
+      localStorage.setItem('monorid-secret-key', secretKey);
+      localStorage.setItem('monorid-telegram-token', telegramToken);
+      localStorage.setItem('monorid-telegram-chat', telegramChatId);
+      localStorage.setItem('monorid-config', JSON.stringify(config));
+    } catch {
+      // storage unavailable
+    }
+  }, [settingsHydrated, apiKey, secretKey, telegramToken, telegramChatId, config]);
 
   // 1. Fetch Server IPv4 Address on mount
   useEffect(() => {
@@ -80,12 +129,44 @@ export default function Home() {
             setServerIp(data.ip);
           }
         }
-      } catch (err) {
-        setServerIp('34.128.214.90'); // resilient display fallback
+      } catch {
+        setServerIp('Not detected');
       }
     }
     loadServerIp();
   }, []);
+
+  // 1b. Fetch real MEXC account balance (equity) when API credentials are available
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadBalance() {
+      if (!apiKey || !secretKey) return;
+      try {
+        const res = await fetch('/api/mexc/balance', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apiKey, secretKey }),
+        });
+        const data = await res.json().catch(() => null);
+        if (!cancelled && data && data.success && data.balance) {
+          const totalEquity = (data.balance.totalEquity || 0) + (data.balance.unrealisedProfit || 0);
+          if (totalEquity > 0) {
+            setEquity(totalEquity);
+          }
+        }
+      } catch (err) {
+        console.warn('[MEXC] Balance fetch failed:', err);
+      }
+    }
+
+    loadBalance();
+    const interval = setInterval(loadBalance, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [apiKey, secretKey]);
 
   // 2. Fetch Tickers and Initialize Market Data
   const loadTickers = useCallback(async () => {
@@ -98,15 +179,14 @@ export default function Home() {
           return data.tickers;
         }
       }
-    } catch {
-      // fallback
+      console.error('[MEXC] Ticker fetch returned empty — market data unavailable');
+    } catch (err) {
+      console.error('[MEXC] Ticker fetch failed — market data unavailable:', err);
     }
-    const curated = generateCuratedMarketData();
-    setTickers(curated);
-    return curated;
+    return [];
   }, []);
 
-  // 3. Scan top volatile symbols for 5m Liquidity Sweeps
+  // 3. Scan top volatile symbols for CRUDE OIL BUY/SELL signals with EMA 200 filter
   const runScanner = useCallback(async (currentTickers?: MexcTicker[]) => {
     setIsScanningBatch(true);
     const targetTickers = currentTickers || tickers;
@@ -144,13 +224,14 @@ export default function Home() {
                   groupName,
                   side: item.analysis.action,
                   price: item.analysis.entryPrice || t?.lastPrice || 100,
-                  confidence: Math.min(96, Math.round(85 + (item.analysis.volMultiplier || 1.1) * 5)),
+                  confidence: Math.min(96, Math.round(85 + (item.analysis.emaFilterOK ? 10 : 0))),
                   leverage: item.analysis.recommendedLeverage || 12,
                   sl: item.analysis.slLevel || (item.analysis.entryPrice || 100) * 0.985,
                   tp1: item.analysis.tp1Level || (item.analysis.entryPrice || 100) * 1.015,
                   tp2: item.analysis.tp2Level || (item.analysis.entryPrice || 100) * 1.03,
                   tp3: item.analysis.tp3Level || (item.analysis.entryPrice || 100) * 1.045,
-                  volMult: item.analysis.volMultiplier || 1.2,
+                  rsi: item.analysis.rsi || 50,
+                  emaFilterOK: item.analysis.emaFilterOK || false,
                   timestamp: Date.now(),
                   status: 'ACTIVE',
                 });
@@ -159,47 +240,6 @@ export default function Home() {
           }
 
           setScanResults((prev) => ({ ...prev, ...newResults }));
-
-          // Always ensure at least 2 active high-conviction signals for display like reference image
-          if (newSignals.length === 0 && targetTickers.length >= 2) {
-            const t1 = targetTickers[0];
-            const t2 = targetTickers[1];
-            newSignals.push(
-              {
-                id: `sig-${t1.symbol}-1`,
-                symbol: t1.symbol,
-                groupName: t1.groupName,
-                side: 'BUY',
-                price: t1.lastPrice,
-                confidence: 92,
-                leverage: 12,
-                sl: Number((t1.lastPrice * 0.985).toFixed(4)),
-                tp1: Number((t1.lastPrice * 1.012).toFixed(4)),
-                tp2: Number((t1.lastPrice * 1.025).toFixed(4)),
-                tp3: Number((t1.lastPrice * 1.04).toFixed(4)),
-                volMult: 2.1,
-                timestamp: Date.now(),
-                status: 'ACTIVE',
-              },
-              {
-                id: `sig-${t2.symbol}-2`,
-                symbol: t2.symbol,
-                groupName: t2.groupName,
-                side: 'SELL',
-                price: t2.lastPrice,
-                confidence: 89,
-                leverage: 10,
-                sl: Number((t2.lastPrice * 1.015).toFixed(4)),
-                tp1: Number((t2.lastPrice * 0.988).toFixed(4)),
-                tp2: Number((t2.lastPrice * 0.975).toFixed(4)),
-                tp3: Number((t2.lastPrice * 0.96).toFixed(4)),
-                volMult: 1.8,
-                timestamp: Date.now(),
-                status: 'ACTIVE',
-              }
-            );
-          }
-
           setActiveSignals(newSignals);
         }
       }
@@ -217,135 +257,6 @@ export default function Home() {
       const t = await loadTickers();
       if (!isMounted) return;
       runScanner(t);
-      // Seed initial demo positions matching 3 of the 8 bots (3/8 slots active)
-      setPositions([
-        {
-          id: 'pos-btc-1',
-          symbol: 'BTC_USDT',
-          groupName: 'Titan Momentum Core',
-          botId: 'apex-momentum',
-          botCode: 'Apex Momentum',
-          botName: 'Apex Momentum',
-          side: 'LONG',
-          entryPrice: 90850.0,
-          currentPrice: 91420.0,
-          leverage: 12,
-          initialSize: 1000,
-          currentSize: 750, // 25% closed at TP1
-          equityUsed: 1000,
-          slPrice: 90850.0, // Trailing at Break-Even after TP1
-          tp1Price: 91200.0,
-          tp2Price: 91800.0,
-          tp3Price: 92600.0,
-          tp1Hit: true,
-          tp2Hit: false,
-          tp3Hit: false,
-          slHit: false,
-          unrealizedPnl: 75.25,
-          unrealizedPnlPct: 7.52,
-          realizedPnl: 43.75,
-          status: 'OPEN',
-          createdAt: Date.now() - 18 * 60 * 1000,
-        },
-        {
-          id: 'pos-sol-2',
-          symbol: 'SOL_USDT',
-          groupName: 'Apex Cyber-Volatiles',
-          botId: 'breakout-hunter',
-          botCode: 'Breakout Hunter',
-          botName: 'Breakout Hunter',
-          side: 'LONG',
-          entryPrice: 212.5,
-          currentPrice: 218.4,
-          leverage: 15,
-          initialSize: 1000,
-          currentSize: 1000,
-          equityUsed: 1000,
-          slPrice: 209.0,
-          tp1Price: 216.0,
-          tp2Price: 219.5,
-          tp3Price: 224.0,
-          tp1Hit: true,
-          tp2Hit: false,
-          tp3Hit: false,
-          slHit: false,
-          unrealizedPnl: 41.6,
-          unrealizedPnlPct: 4.16,
-          realizedPnl: 25.0,
-          status: 'OPEN',
-          createdAt: Date.now() - 12 * 60 * 1000,
-        },
-        {
-          id: 'pos-sui-3',
-          symbol: 'SUI_USDT',
-          groupName: 'Quantum Velocity',
-          botId: 'swing-raider',
-          botCode: 'Swing Raider',
-          botName: 'Swing Raider',
-          side: 'LONG',
-          entryPrice: 3.02,
-          currentPrice: 3.14,
-          leverage: 12,
-          initialSize: 1000,
-          currentSize: 1000,
-          equityUsed: 1000,
-          slPrice: 2.96,
-          tp1Price: 3.12,
-          tp2Price: 3.20,
-          tp3Price: 3.32,
-          tp1Hit: true,
-          tp2Hit: false,
-          tp3Hit: false,
-          slHit: false,
-          unrealizedPnl: 47.68,
-          unrealizedPnlPct: 4.76,
-          realizedPnl: 28.5,
-          status: 'OPEN',
-          createdAt: Date.now() - 7 * 60 * 1000,
-        },
-      ]);
-
-      setLogs([
-        {
-          id: 'log-1',
-          timestamp: Date.now() - 18 * 60 * 1000,
-          groupName: 'Titan Momentum Core',
-          botCode: 'Apex Momentum',
-          botName: 'Apex Momentum',
-          symbol: 'BTC_USDT',
-          type: 'ENTRY',
-          side: 'LONG',
-          price: 90850.0,
-          sizeFraction: '10% ($1,000 USDT)',
-          message: 'Automated 5M Sell-Side Liquidity Raid Confirmed. Apex Momentum allocated slot 1/8.',
-        },
-        {
-          id: 'log-2',
-          timestamp: Date.now() - 12 * 60 * 1000,
-          groupName: 'Apex Cyber-Volatiles',
-          botCode: 'Breakout Hunter',
-          botName: 'Breakout Hunter',
-          symbol: 'SOL_USDT',
-          type: 'ENTRY',
-          side: 'LONG',
-          price: 212.5,
-          sizeFraction: '10% ($1,000 USDT)',
-          message: 'Automated 5M Breakout Liquidity Raid. Breakout Hunter allocated slot 2/8.',
-        },
-        {
-          id: 'log-3',
-          timestamp: Date.now() - 7 * 60 * 1000,
-          groupName: 'Quantum Velocity',
-          botCode: 'Swing Raider',
-          botName: 'Swing Raider',
-          symbol: 'SUI_USDT',
-          type: 'ENTRY',
-          side: 'LONG',
-          price: 3.02,
-          sizeFraction: '10% ($1,000 USDT)',
-          message: 'Automated 5M Swing Sweep Confirmed. Swing Raider allocated slot 3/8.',
-        },
-      ]);
     };
     initialize();
     return () => {
@@ -391,13 +302,303 @@ export default function Home() {
     }
   }, [telegramToken, telegramChatId]);
 
+  // MEXC Real Order Execution Helpers
+  const executeMexcOrder = async (
+    symbol: string,
+    side: 'BUY' | 'SELL',
+    leverage: number,
+    vol: number
+  ) => {
+    try {
+      const res = await fetch('/api/mexc/order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'place',
+          symbol,
+          side,
+          type: 5, // Market order
+          leverage,
+          vol,
+          apiKey,
+          secretKey,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        console.log('[MEXC] Order placed:', data.orderId);
+      } else {
+        console.warn('[MEXC] Order failed:', data.message);
+      }
+      return data;
+    } catch (err) {
+      console.error('[MEXC] Order execution error:', err);
+      return { success: false, message: 'Network error' };
+    }
+  };
+
+  const executeMexcTpsl = async (
+    symbol: string,
+    positionType: 1 | 2,
+    takeProfitPrice?: number,
+    stopLossPrice?: number
+  ) => {
+    try {
+      const res = await fetch('/api/mexc/order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'set_tpsl',
+          symbol,
+          positionType,
+          takeProfitPrice,
+          stopLossPrice,
+          apiKey,
+          secretKey,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        console.log('[MEXC] TP/SL set for', symbol);
+      } else {
+        console.warn('[MEXC] TP/SL failed:', data.message);
+      }
+      return data;
+    } catch (err) {
+      console.error('[MEXC] TP/SL error:', err);
+      return { success: false, message: 'Network error' };
+    }
+  };
+
+  const executeMexcClose = async (
+    symbol: string,
+    positionType: 1 | 2,
+    quantity: number
+  ) => {
+    try {
+      const res = await fetch('/api/mexc/order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'close',
+          symbol,
+          positionType,
+          quantity,
+          apiKey,
+          secretKey,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        console.log('[MEXC] Position closed:', symbol);
+      } else {
+        console.warn('[MEXC] Close failed:', data.message);
+      }
+      return data;
+    } catch (err) {
+      console.error('[MEXC] Close error:', err);
+      return { success: false, message: 'Network error' };
+    }
+  };
+
+  // WebSocket price feed subscriptions for open positions (keyed by symbol so
+  // price ticks don't tear down and re-subscribe every stream)
+  const openSymbolsKey = positions
+    .filter((p) => p.status === 'OPEN')
+    .map((p) => p.symbol)
+    .sort()
+    .join(',');
+
+  useEffect(() => {
+    const symbols = openSymbolsKey.split(',').filter(Boolean);
+    if (symbols.length === 0) return;
+
+    const unsubscribers: (() => void)[] = [];
+
+    symbols.forEach((symbol) => {
+      const unsub = mexcWs.subscribe(symbol, (update) => {
+        setPositions((prevPositions) => {
+          return prevPositions.map((p) => {
+            if (p.symbol !== update.symbol || p.status !== 'OPEN') return p;
+
+            const newPrice = update.price;
+            const isLong = p.side === 'LONG';
+            const pnlPct = isLong
+              ? ((newPrice - p.entryPrice) / p.entryPrice) * p.leverage * 100
+              : ((p.entryPrice - newPrice) / p.entryPrice) * p.leverage * 100;
+            const unPnl = (p.equityUsed * pnlPct) / 100;
+
+            let updatedPos = { ...p, currentPrice: newPrice, unrealizedPnl: unPnl, unrealizedPnlPct: pnlPct };
+
+            if (!p.tp1Hit && (isLong ? newPrice >= p.tp1Price : newPrice <= p.tp1Price)) {
+              updatedPos.tp1Hit = true;
+              updatedPos.currentSize = p.initialSize * 0.75;
+              const tp1Pnl = p.equityUsed * 0.25 * (p.leverage * (config.rrTp1 * 0.015));
+              updatedPos.realizedPnl += tp1Pnl;
+              updatedPos.slPrice = p.entryPrice;
+
+              addLog({
+                groupName: p.groupName,
+                symbol: p.symbol,
+                type: 'TP1_HIT',
+                side: p.side,
+                price: newPrice,
+                sizeFraction: '25% Scaled Out',
+                pnl: tp1Pnl,
+                message: `Target 1 hit at $${newPrice}. 25% position closed, SL set to Break-Even.`,
+              });
+              sendTelegramAlert('TP1_HIT', p, newPrice, tp1Pnl);
+
+              if (apiKey && secretKey) {
+                // Real 25% partial close, then move exchange TP/SL
+                // (SL -> break-even, TP -> next target)
+                const tp1Qty = Math.floor(p.contractVol * 0.25);
+                if (tp1Qty >= 1) {
+                  updatedPos.closedVol = p.closedVol + tp1Qty;
+                  executeMexcClose(p.symbol, isLong ? 1 : 2, tp1Qty);
+                }
+                executeMexcTpsl(p.symbol, isLong ? 1 : 2, p.tp2Price, p.entryPrice);
+              }
+            }
+
+            if (p.tp1Hit && !p.tp2Hit && (isLong ? newPrice >= p.tp2Price : newPrice <= p.tp2Price)) {
+              updatedPos.tp2Hit = true;
+              updatedPos.currentSize = p.initialSize * 0.25;
+              const tp2Pnl = p.equityUsed * 0.5 * (p.leverage * (config.rrTp2 * 0.015));
+              updatedPos.realizedPnl += tp2Pnl;
+
+              addLog({
+                groupName: p.groupName,
+                symbol: p.symbol,
+                type: 'TP2_HIT',
+                side: p.side,
+                price: newPrice,
+                sizeFraction: '50% Scaled Out',
+                pnl: tp2Pnl,
+                message: `Target 2 hit at $${newPrice}. 50% position closed.`,
+              });
+              sendTelegramAlert('TP2_HIT', p, newPrice, tp2Pnl);
+
+              if (apiKey && secretKey) {
+                const tp2Qty = Math.floor(p.contractVol * 0.5);
+                if (tp2Qty >= 1) {
+                  updatedPos.closedVol = p.closedVol + tp2Qty;
+                  executeMexcClose(p.symbol, isLong ? 1 : 2, tp2Qty);
+                }
+              }
+            }
+
+            if (p.tp2Hit && !p.tp3Hit && (isLong ? newPrice >= p.tp3Price : newPrice <= p.tp3Price)) {
+              updatedPos.tp3Hit = true;
+              updatedPos.currentSize = 0;
+              updatedPos.status = 'CLOSED';
+              updatedPos.closeReason = 'TP3';
+              const tp3Pnl = updatedPos.realizedPnl;
+
+              addLog({
+                groupName: p.groupName,
+                symbol: p.symbol,
+                type: 'TP3_HIT',
+                side: p.side,
+                price: newPrice,
+                sizeFraction: '100% Full Exit',
+                pnl: tp3Pnl,
+                message: `Target 3 reached at $${newPrice}. Full position completed!`,
+              });
+              sendTelegramAlert('TP3_HIT', p, newPrice, tp3Pnl);
+
+              if (apiKey && secretKey) {
+                const remaining = p.contractVol - p.closedVol;
+                if (remaining >= 1) executeMexcClose(p.symbol, isLong ? 1 : 2, remaining);
+              }
+            }
+
+            if ((isLong && newPrice <= p.slPrice) || (!isLong && newPrice >= p.slPrice)) {
+              updatedPos.slHit = true;
+              updatedPos.currentSize = 0;
+              updatedPos.status = 'CLOSED';
+              updatedPos.closeReason = 'SL';
+              const slPnl = unPnl;
+
+              addLog({
+                groupName: p.groupName,
+                symbol: p.symbol,
+                type: 'SL_HIT',
+                side: p.side,
+                price: newPrice,
+                pnl: slPnl,
+                message: `Stop Loss executed at $${newPrice}. Capital preserved.`,
+              });
+              sendTelegramAlert('SL_HIT', p, newPrice, slPnl);
+
+              if (apiKey && secretKey) {
+                const remaining = p.contractVol - p.closedVol;
+                if (remaining >= 1) executeMexcClose(p.symbol, isLong ? 1 : 2, remaining);
+              }
+            }
+
+            return updatedPos;
+          });
+        });
+      });
+
+      unsubscribers.push(unsub);
+    });
+
+    return () => {
+      unsubscribers.forEach((unsub) => unsub());
+    };
+  }, [openSymbolsKey, config, apiKey, secretKey, addLog, sendTelegramAlert]);
+
   // Automated Trade Execution Pipeline (Enforces MAX 8 Open Positions together)
-  const autoExecuteConfirmedTrade = useCallback((
+  const autoExecuteConfirmedTrade = useCallback(async (
     symbol: string,
     side: 'BUY' | 'SELL',
     analysis: SignalResult,
     ticker?: MexcTicker
   ) => {
+    if (equity <= 0) {
+      addLog({
+        groupName: ticker?.groupName || 'Risk Engine',
+        symbol,
+        type: 'SCAN_SIGNAL',
+        side: 'INFO',
+        price: ticker?.lastPrice || 0,
+        message: `Trade on ${symbol} skipped: No MEXC account balance loaded. Add API credentials in Settings.`,
+      });
+      return;
+    }
+
+    const tradePrice = analysis.entryPrice || ticker?.lastPrice || 100;
+    const lev = analysis.recommendedLeverage || 12;
+    const tradeEquity = equity * (config.equityRiskPct / 100); // 10% equity
+
+    // Convert USDT notional into MEXC contract volume (vol is denominated in contracts)
+    const contractSize = await fetchMexcContractSize(symbol);
+    if (!contractSize) {
+      addLog({
+        groupName: ticker?.groupName || 'Risk Engine',
+        symbol,
+        type: 'SCAN_SIGNAL',
+        side: 'INFO',
+        price: tradePrice,
+        message: `Trade on ${symbol} skipped: contract size unavailable from MEXC.`,
+      });
+      return;
+    }
+    const contractVol = Math.floor((tradeEquity * lev) / (contractSize * tradePrice));
+    if (contractVol < 1) {
+      addLog({
+        groupName: ticker?.groupName || 'Risk Engine',
+        symbol,
+        type: 'SCAN_SIGNAL',
+        side: 'INFO',
+        price: tradePrice,
+        message: `Trade on ${symbol} skipped: notional below MEXC minimum contract size (needs ${Math.ceil((contractSize * tradePrice) / (lev || 1))}+ USDT margin).`,
+      });
+      return;
+    }
+
     setPositions((currentPositions) => {
       const activeCount = currentPositions.filter((p) => p.status === 'OPEN').length;
 
@@ -406,7 +607,7 @@ export default function Home() {
         addLog({
           groupName: ticker?.groupName || 'Risk Engine',
           symbol,
-          type: 'SCAN_RAID',
+          type: 'SCAN_SIGNAL',
           side: 'INFO',
           price: ticker?.lastPrice || 0,
           message: `MAX POSITIONS LIMIT REACHED (8/8). Trade on ${symbol} skipped to preserve risk ceiling.`,
@@ -425,9 +626,6 @@ export default function Home() {
       );
       const availableBot = bots.find((b) => !activeBotIds.has(b.id)) || bots[0];
 
-      const tradePrice = analysis.entryPrice || ticker?.lastPrice || 100;
-      const lev = analysis.recommendedLeverage || 12;
-      const tradeEquity = equity * (config.equityRiskPct / 100); // 10% equity
       const riskDist = analysis.riskDist || tradePrice * 0.015;
 
       const slPrice = analysis.slLevel || (side === 'BUY' ? tradePrice - riskDist : tradePrice + riskDist);
@@ -451,6 +649,8 @@ export default function Home() {
         initialSize: tradeEquity,
         currentSize: tradeEquity,
         equityUsed: tradeEquity,
+        contractVol,
+        closedVol: 0,
         slPrice: Number(slPrice.toFixed(6)),
         tp1Price: Number(tp1Price.toFixed(6)),
         tp2Price: Number(tp2Price.toFixed(6)),
@@ -484,132 +684,48 @@ export default function Home() {
         type: 'ENTRY',
         side: newPosition.side,
         price: tradePrice,
-        sizeFraction: `Slot ${activeCount + 1}/8 (10% Equity • ${lev}x)`,
-        message: `[AUTO-EXECUTION] ${botDisplayName} triggered ${newPosition.side} on 5M sweep. SL: $${slPrice.toFixed(4)}, TP1: $${tp1Price.toFixed(4)}, TP2: $${tp2Price.toFixed(4)}, TP3: $${tp3Price.toFixed(4)}.`,
+        sizeFraction: `Slot ${activeCount + 1}/8 (10% Equity • ${lev}x • ${contractVol} Contracts)`,
+        message: `[AUTO-EXECUTION] ${botDisplayName} triggered ${newPosition.side} on CRUDE OIL 3M signal (EMA 200 confirmed). SL: $${slPrice.toFixed(4)}, TP1: $${tp1Price.toFixed(4)}, TP2: $${tp2Price.toFixed(4)}, TP3: $${tp3Price.toFixed(4)}.`,
       });
 
       // Send Telegram alert
       sendTelegramAlert('ENTRY', newPosition, tradePrice);
 
+      // Execute real order on MEXC
+      if (apiKey && secretKey) {
+        executeMexcOrder(symbol, side, lev, contractVol).then((result) => {
+          if (result.success) {
+            // Exchange TP/SL: final target (TP3) + stop loss
+            executeMexcTpsl(symbol, side === 'BUY' ? 1 : 2, tp3Price, slPrice);
+          }
+        });
+      }
+
       return [newPosition, ...currentPositions];
     });
-  }, [bots, equity, config, addLog, sendTelegramAlert]);
+  }, [bots, equity, config, addLog, sendTelegramAlert, apiKey, secretKey]);
 
-  // 4. Background Automated 24/7 Scanning & Price Loop
+  // Auto-execute confirmed scanner signals while AUTO TRADING is enabled
+  useEffect(() => {
+    if (!isAutoTrading || !apiKey || !secretKey) return;
+    for (const sig of activeSignals) {
+      const analysis = scanResults[sig.symbol];
+      if (!analysis || (analysis.action !== 'BUY' && analysis.action !== 'SELL')) continue;
+      const ticker = tickers.find((t) => t.symbol === sig.symbol);
+      autoExecuteConfirmedTrade(sig.symbol, analysis.action, analysis, ticker);
+    }
+  }, [activeSignals, isAutoTrading, scanResults, tickers, autoExecuteConfirmedTrade, apiKey, secretKey]);
+
+  // 4. Background Automated 24/7 Scanning Loop
   useEffect(() => {
     const scanInterval = setInterval(() => {
       runScanner();
-    }, 25000); // scan every 25 seconds
-
-    const priceTickInterval = setInterval(() => {
-      // Simulate micro-fluctuations in positions & check TP1 / TP2 / TP3
-      setPositions((prevPositions) => {
-        return prevPositions.map((pos) => {
-          if (pos.status !== 'OPEN') return pos;
-          const drift = (Math.random() - 0.48) * 0.001;
-          const newPrice = Number((pos.currentPrice * (1 + drift)).toFixed(6));
-          const isLong = pos.side === 'LONG';
-          const pnlPct = isLong
-            ? ((newPrice - pos.entryPrice) / pos.entryPrice) * pos.leverage * 100
-            : ((pos.entryPrice - newPrice) / pos.entryPrice) * pos.leverage * 100;
-          const unPnl = (pos.equityUsed * pnlPct) / 100;
-
-          let updatedPos = { ...pos, currentPrice: newPrice, unrealizedPnl: unPnl, unrealizedPnlPct: pnlPct };
-
-          // Check TP1
-          if (!pos.tp1Hit && (isLong ? newPrice >= pos.tp1Price : newPrice <= pos.tp1Price)) {
-            updatedPos.tp1Hit = true;
-            updatedPos.currentSize = pos.initialSize * 0.75; // 25% closed
-            updatedPos.realizedPnl += pos.equityUsed * 0.25 * (pos.leverage * (config.rrTp1 * 0.015));
-            updatedPos.slPrice = pos.entryPrice; // move SL to BE
-
-            // Dispatch log
-            addLog({
-              groupName: pos.groupName,
-              symbol: pos.symbol,
-              type: 'TP1_HIT',
-              side: pos.side,
-              price: newPrice,
-              sizeFraction: '25% Scaled Out',
-              pnl: 35.5,
-              message: `Target 1 hit at $${newPrice}. 25% position closed, SL set to Break-Even.`,
-            });
-
-            // Dispatch telegram
-            sendTelegramAlert('TP1_HIT', pos, newPrice, 35.5);
-          }
-
-          // Check TP2
-          if (pos.tp1Hit && !pos.tp2Hit && (isLong ? newPrice >= pos.tp2Price : newPrice <= pos.tp2Price)) {
-            updatedPos.tp2Hit = true;
-            updatedPos.currentSize = pos.initialSize * 0.25; // 50% closed
-            updatedPos.realizedPnl += pos.equityUsed * 0.5 * (pos.leverage * (config.rrTp2 * 0.015));
-
-            addLog({
-              groupName: pos.groupName,
-              symbol: pos.symbol,
-              type: 'TP2_HIT',
-              side: pos.side,
-              price: newPrice,
-              sizeFraction: '50% Scaled Out',
-              pnl: 78.2,
-              message: `Target 2 hit at $${newPrice}. 50% position closed.`,
-            });
-
-            sendTelegramAlert('TP2_HIT', pos, newPrice, 78.2);
-          }
-
-          // Check TP3 (Full close)
-          if (pos.tp2Hit && !pos.tp3Hit && (isLong ? newPrice >= pos.tp3Price : newPrice <= pos.tp3Price)) {
-            updatedPos.tp3Hit = true;
-            updatedPos.currentSize = 0;
-            updatedPos.status = 'CLOSED';
-            updatedPos.closeReason = 'TP3';
-
-            addLog({
-              groupName: pos.groupName,
-              symbol: pos.symbol,
-              type: 'TP3_HIT',
-              side: pos.side,
-              price: newPrice,
-              sizeFraction: '100% Full Exit',
-              pnl: 142.5,
-              message: `Target 3 reached at $${newPrice}. Full position completed!`,
-            });
-
-            sendTelegramAlert('TP3_HIT', pos, newPrice, 142.5);
-          }
-
-          // Check SL
-          if ((isLong && newPrice <= pos.slPrice) || (!isLong && newPrice >= pos.slPrice)) {
-            updatedPos.slHit = true;
-            updatedPos.currentSize = 0;
-            updatedPos.status = 'CLOSED';
-            updatedPos.closeReason = 'SL';
-
-            addLog({
-              groupName: pos.groupName,
-              symbol: pos.symbol,
-              type: 'SL_HIT',
-              side: pos.side,
-              price: newPrice,
-              pnl: -60.0,
-              message: `Stop Loss executed at $${newPrice}. Capital preserved.`,
-            });
-
-            sendTelegramAlert('SL_HIT', pos, newPrice, -60.0);
-          }
-
-          return updatedPos;
-        });
-      });
-    }, 4000);
+    }, 25000);
 
     return () => {
       clearInterval(scanInterval);
-      clearInterval(priceTickInterval);
     };
-  }, [config, runScanner, addLog, sendTelegramAlert]);
+  }, [runScanner]);
 
   // Inspect Candle Chart Modal
   const handleOpenChart = async (symbol: string) => {
@@ -629,28 +745,10 @@ export default function Home() {
           return;
         }
       }
-    } catch {
-      // fallback
+    } catch (err) {
+      console.error('[MEXC] Chart candle fetch failed:', err);
     }
-
-    // If fetch failed, generate synthetic 5m candles
-    const baseT = tickers.find((t) => t.symbol === symbol);
-    const p = baseT?.lastPrice || 100;
-    const syn: Candle[] = [];
-    const now = Date.now();
-    for (let i = 0; i < 30; i++) {
-      const open = p * (1 + (Math.sin(i / 3) * 0.005));
-      const close = open * (1 + (Math.random() - 0.49) * 0.006);
-      syn.push({
-        timestamp: now - (30 - i) * 300000,
-        open,
-        high: Math.max(open, close) * 1.003,
-        low: Math.min(open, close) * 0.997,
-        close,
-        volume: 120000 + Math.random() * 80000,
-      });
-    }
-    setChartCandles(syn);
+    setChartCandles([]);
   };
 
   // Manual Position Close
@@ -667,6 +765,13 @@ export default function Home() {
             pnl: p.unrealizedPnl,
             message: `Manually closed ${p.symbol} position. Final P&L: $${p.unrealizedPnl.toFixed(2)}.`,
           });
+          // Execute real close on MEXC (remaining contracts)
+          if (apiKey && secretKey) {
+            const remaining = p.contractVol - p.closedVol;
+            if (remaining >= 1) {
+              executeMexcClose(p.symbol, p.side === 'LONG' ? 1 : 2, remaining);
+            }
+          }
           return { ...p, status: 'CLOSED', closeReason: 'MANUAL' };
         }
         return p;
@@ -676,6 +781,16 @@ export default function Home() {
 
   // Emergency Panic Flatten
   const handleEmergencyFlatten = () => {
+    if (apiKey && secretKey) {
+      positions
+        .filter((p) => p.status === 'OPEN')
+        .forEach((p) => {
+          const remaining = p.contractVol - p.closedVol;
+          if (remaining >= 1) {
+            executeMexcClose(p.symbol, p.side === 'LONG' ? 1 : 2, remaining);
+          }
+        });
+    }
     setPositions((prev) =>
       prev.map((p) => {
         if (p.status === 'OPEN') {
@@ -714,24 +829,42 @@ export default function Home() {
     return await res.json();
   };
 
-  // Calculate live portfolio margin
+  // Calculate live portfolio metrics from real trade data
   const openPositionsCount = positions.filter((p) => p.status === 'OPEN').length;
   const marginUsed = positions
     .filter((p) => p.status === 'OPEN')
     .reduce((sum, p) => sum + p.equityUsed, 0);
+
+  const closedPositions = positions.filter((p) => p.status === 'CLOSED');
+  const totalRealizedPnl = closedPositions.reduce((sum, p) => sum + p.realizedPnl, 0);
+  const totalUnrealizedPnl = positions
+    .filter((p) => p.status === 'OPEN')
+    .reduce((sum, p) => sum + p.unrealizedPnl, 0);
+  const computedTodayPnl = totalRealizedPnl + totalUnrealizedPnl;
+  const totalTrades = positions.length;
+  const winningTrades = closedPositions.filter((p) => p.realizedPnl > 0);
+  const winRate = closedPositions.length > 0 ? (winningTrades.length / closedPositions.length) * 100 : 0;
+  const grossProfit = winningTrades.reduce((sum, p) => sum + p.realizedPnl, 0);
+  const grossLoss = Math.abs(closedPositions.filter((p) => p.realizedPnl < 0).reduce((sum, p) => sum + p.realizedPnl, 0));
+  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 99 : 0;
+  const maxDrawdownPct = equity > 0 ? (Math.max(0, grossLoss) / equity) * 100 : 0;
+  const portfolioRiskPct = equity > 0 ? (marginUsed / equity) * 100 : 0;
+  const todayPnlPct = equity > 0 ? (computedTodayPnl / equity) * 100 : 0;
+  const totalBotPnl = computedTodayPnl;
 
   return (
     <div className="min-h-screen bg-[#050811] text-slate-100 flex flex-col font-sans">
       {/* 1. Futuristic Header */}
       <Header
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={(tab) => {
+          setViewBotId(null);
+          setActiveTab(tab);
+        }}
         isAutoTrading={isAutoTrading}
         setIsAutoTrading={setIsAutoTrading}
-        isLiveMode={isLiveMode}
-        setIsLiveMode={setIsLiveMode}
         equity={equity}
-        todayPnl={todayPnl}
+        todayPnl={Number(computedTodayPnl.toFixed(2))}
         openPositionsCount={openPositionsCount}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
         onEmergencyFlatten={handleEmergencyFlatten}
@@ -744,106 +877,48 @@ export default function Home() {
         {/* TAB 1: DASHBOARD (Cybernetic Hub matching user's reference image) */}
         {activeTab === 'dashboard' && (
           <div className="space-y-5">
-            {/* Top Grid: Market Feed (Left) | Bot Constellation Core (Center) | Risk Overview (Right) */}
+            {/* Top Grid: Bot Constellation Core (Left) | Risk Overview (Right) */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              {/* Left Column: Market Data Feed */}
-              <div className="lg:col-span-3 space-y-4">
-                <MarketDataFeed
-                  tickers={tickers}
-                  selectedSymbol={selectedSymbol}
-                  onSelectSymbol={(sym) => {
-                    setSelectedSymbol(sym);
-                    handleOpenChart(sym);
-                  }}
-                  isLoading={isScanningBatch}
-                />
-                <SystemStatusCard
-                  serverIp={serverIp}
-                  isAutoTrading={isAutoTrading}
-                  isLiveMode={isLiveMode}
-                  latencyMs={latencyMs}
-                />
-              </div>
-
-              {/* Center Column: Central Bot Constellation Hub */}
-              <div className="lg:col-span-6 flex flex-col justify-center">
+              {/* Left Column: Central Bot Constellation Hub */}
+              <div className="lg:col-span-8 flex flex-col justify-center">
                 <BotConstellation
                   bots={bots}
                   activeBotId={selectedBotId}
                   onSelectBot={(id) => setSelectedBotId(id)}
                   isAutoTrading={isAutoTrading}
-                  totalPnl={18.35}
+                  totalPnl={Number(totalBotPnl.toFixed(2))}
                   openPositionsCount={openPositionsCount}
-                  onOpenLogoMotion={() => setIsLogoMotionModalOpen(true)}
+                  onOpenLiveTrades={() => {
+                    setViewBotId(null);
+                    setActiveTab('positions');
+                  }}
+                  onOpenBotWork={(botId) => {
+                    setViewBotId(botId);
+                    setActiveTab('positions');
+                  }}
                 />
               </div>
 
-              {/* Right Column: Risk Management & Performance Summary */}
-              <div className="lg:col-span-3 space-y-4">
-                <RiskOverviewCard
-                  equity={equity}
-                  marginUsed={marginUsed}
-                  portfolioRiskPct={1.26}
-                  maxDrawdownPct={2.13}
-                  activePositionsCount={openPositionsCount}
-                />
-                <PerformanceSummaryCard
-                  todayPnl={todayPnl}
-                  todayPnlPct={18.35}
-                  winRate={74.2}
-                  profitFactor={2.38}
-                  totalTrades={38}
-                />
-              </div>
-            </div>
-
-            {/* Middle Section: Active Trading Signals Radar */}
-            <div className="rounded-xl border border-cyan-950/70 bg-[#060a14]/90 p-4 backdrop-blur-md">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-3">
-                <div className="flex items-center gap-2">
-                  <Zap className="w-5 h-5 text-cyan-400" />
-                  <h3 className="text-sm font-mono font-bold text-white tracking-wider uppercase">
-                    Live Trading Signals & Liquidity Sweeps
-                  </h3>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-semibold">
-                    AUTONOMOUS 5M RAIDS
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-slate-400">
-                    Max Slots: <span className="text-emerald-400 font-bold">{openPositionsCount} / {MAX_OPEN_POSITIONS} Positions Open</span>
-                  </span>
-                  <button
-                    onClick={() => setActiveTab('scanner')}
-                    className="text-xs font-mono text-cyan-400 hover:text-cyan-300 underline"
-                  >
-                    View All 75 Contracts →
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                {activeSignals.slice(0, 4).map((sig) => (
-                  <TradingSignalCard
-                    key={sig.id}
-                    signal={sig}
-                    onExecute={(s) => {
-                      const t = tickers.find((tick) => tick.symbol === s.symbol);
-                      autoExecuteConfirmedTrade(s.symbol, s.side, {
-                        action: s.side,
-                        entryPrice: s.price,
-                        slLevel: s.sl,
-                        tp1Level: s.tp1,
-                        tp2Level: s.tp2,
-                        tp3Level: s.tp3,
-                        recommendedLeverage: s.leverage,
-                        volMultiplier: s.volMult,
-                      } as any, t);
-                    }}
-                    onViewChart={handleOpenChart}
+              {/* Right Column: Risk Management & Performance Summary (fills same height as constellation) */}
+              <div className="lg:col-span-4 flex flex-col gap-4">
+                <div className="flex-1">
+                  <RiskOverviewCard
+                    equity={equity}
+                    marginUsed={marginUsed}
+                    portfolioRiskPct={Number(portfolioRiskPct.toFixed(2))}
+                    maxDrawdownPct={Number(maxDrawdownPct.toFixed(2))}
+                    activePositionsCount={openPositionsCount}
                   />
-                ))}
+                </div>
+                <div className="flex-1">
+                  <PerformanceSummaryCard
+                    todayPnl={Number(computedTodayPnl.toFixed(2))}
+                    todayPnlPct={Number(todayPnlPct.toFixed(2))}
+                    winRate={Number(winRate.toFixed(1))}
+                    profitFactor={Number(profitFactor.toFixed(2))}
+                    totalTrades={totalTrades}
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -854,7 +929,6 @@ export default function Home() {
           <MarketScanner
             tickers={tickers}
             scanResults={scanResults}
-            onExecuteTrade={autoExecuteConfirmedTrade}
             onViewChart={handleOpenChart}
             onRefreshScan={() => runScanner()}
             isScanningBatch={isScanningBatch}
@@ -867,6 +941,9 @@ export default function Home() {
             positions={positions}
             onClosePosition={handleClosePosition}
             onViewChart={handleOpenChart}
+            filterBotId={viewBotId}
+            filterBotName={viewBotId ? bots.find((b) => b.id === viewBotId)?.name : undefined}
+            onClearBotFilter={() => setViewBotId(null)}
           />
         )}
 

@@ -1,7 +1,8 @@
 /**
  * MONORID ALGORITHMIC TRADING CORE
  * Developed by Trading Lifestyle Quant
- * Institutional Liquidity Sweep & Futures Execution Engine
+ * CRUDE OIL BUY/SELL Strategy with EMA 200 Trend Filter
+ * Based on Pine Script by nicks1008 (MPL 2.0)
  */
 
 export interface Candle {
@@ -13,53 +14,30 @@ export interface Candle {
   volume: number;
 }
 
-export interface Pool {
-  id: string;
-  level: number;
-  bornBar: number;
-  isHigh: boolean;
-}
-
-export interface PendingSweep {
-  level: number;
-  wickExtreme: number;
-  breakBar: number;
-  raidRange: number;
-  isHigh: boolean;
-}
-
 export interface StrategyConfig {
-  pivotLen: number; // default 8
-  confirmWindow: number; // default 3
-  maxPools: number; // default 12
-  minWickPct: number; // default 25
-  useVolFilter: boolean; // default true
-  volLen: number; // default 20
-  volMultReq: number; // default 1.1
-  tpAtrPeriod: number; // default 14
-  slAtrMult: number; // default 1.5
-  slPercent: number; // default 1.0
-  useAtrSl: boolean; // default true
-  rrTp1: number; // default 1.0
-  rrTp2: number; // default 2.0
-  rrTp3: number; // default 3.0
-  equityRiskPct: number; // default 10%
-  minLeverage: number; // 10
-  maxLeverage: number; // 15
+  smaLength: number;
+  rsiLength: number;
+  rsiHigher: number;
+  rsiLower: number;
+  emaLength: number;
+  distSMA: number;
+  candleLength: number;
+  rrTp1: number;
+  rrTp2: number;
+  rrTp3: number;
+  equityRiskPct: number;
+  minLeverage: number;
+  maxLeverage: number;
 }
 
 export const DEFAULT_CONFIG: StrategyConfig = {
-  pivotLen: 8,
-  confirmWindow: 3,
-  maxPools: 12,
-  minWickPct: 25,
-  useVolFilter: true,
-  volLen: 20,
-  volMultReq: 1.1,
-  tpAtrPeriod: 14,
-  slAtrMult: 1.5,
-  slPercent: 1.0,
-  useAtrSl: true,
+  smaLength: 70,
+  rsiLength: 14,
+  rsiHigher: 80,
+  rsiLower: 20,
+  emaLength: 200,
+  distSMA: 1,
+  candleLength: 1,
   rrTp1: 1.0,
   rrTp2: 2.0,
   rrTp3: 3.0,
@@ -70,30 +48,21 @@ export const DEFAULT_CONFIG: StrategyConfig = {
 
 export interface SignalResult {
   action: 'BUY' | 'SELL' | 'HOLD';
-  sweepLevel?: number;
-  sweepWick?: number;
   entryPrice?: number;
   slLevel?: number;
   tp1Level?: number;
   tp2Level?: number;
   tp3Level?: number;
   riskDist?: number;
-  volMultiplier: number;
-  volOK: boolean;
-  atr: number;
-  highPoolsCount: number;
-  lowPoolsCount: number;
-  nearestAbove?: number;
-  nearestBelow?: number;
-  distAboveAtr?: number;
-  distBelowAtr?: number;
-  pendingSweepText: string;
+  rsi: number;
+  sma: number;
+  ema: number;
+  emaFilterOK: boolean;
+  signalType: 'SMA_CROSS' | 'REVERSAL' | 'NONE';
   recommendedLeverage: number;
+  message: string;
 }
 
-/**
- * Calculates Simple Moving Average
- */
 export function calculateSMA(data: number[], length: number): number[] {
   const result: number[] = new Array(data.length).fill(0);
   for (let i = 0; i < data.length; i++) {
@@ -111,318 +80,235 @@ export function calculateSMA(data: number[], length: number): number[] {
   return result;
 }
 
-/**
- * Calculates Average True Range (Wilder's ATR)
- */
-export function calculateATR(candles: Candle[], period: number = 14): number[] {
+export function calculateEMA(data: number[], length: number): number[] {
+  const result: number[] = new Array(data.length).fill(0);
+  const multiplier = 2 / (length + 1);
+  
+  let sum = 0;
+  for (let i = 0; i < Math.min(length, data.length); i++) {
+    sum += data[i];
+    result[i] = sum / (i + 1);
+  }
+  
+  for (let i = length; i < data.length; i++) {
+    result[i] = (data[i] - result[i - 1]) * multiplier + result[i - 1];
+  }
+  
+  return result;
+}
+
+export function calculateRSI(data: number[], length: number = 14): number[] {
+  const result: number[] = new Array(data.length).fill(50);
+  if (data.length < 2) return result;
+  
+  const gains: number[] = [];
+  const losses: number[] = [];
+  
+  for (let i = 1; i < data.length; i++) {
+    const change = data[i] - data[i - 1];
+    gains.push(change > 0 ? change : 0);
+    losses.push(change < 0 ? -change : 0);
+  }
+  
+  let avgGain = gains.slice(0, length).reduce((a, b) => a + b, 0) / length;
+  let avgLoss = losses.slice(0, length).reduce((a, b) => a + b, 0) / length;
+  
+  for (let i = 0; i < length; i++) {
+    result[i] = 50;
+  }
+  
+  if (avgLoss === 0) {
+    result[length] = 100;
+  } else {
+    const rs = avgGain / avgLoss;
+    result[length] = 100 - (100 / (1 + rs));
+  }
+  
+  for (let i = length; i < gains.length; i++) {
+    avgGain = (avgGain * (length - 1) + gains[i]) / length;
+    avgLoss = (avgLoss * (length - 1) + losses[i]) / length;
+    
+    if (avgLoss === 0) {
+      result[i + 1] = 100;
+    } else {
+      const rs = avgGain / avgLoss;
+      result[i + 1] = 100 - (100 / (1 + rs));
+    }
+  }
+  
+  return result;
+}
+
+export function aggregateCandles(candles: Candle[], factor: number): Candle[] {
+  if (factor <= 1) return candles;
+  const result: Candle[] = [];
+  
+  for (let i = 0; i < candles.length; i += factor) {
+    const group = candles.slice(i, i + factor);
+    if (group.length === 0) continue;
+    
+    result.push({
+      timestamp: group[0].timestamp,
+      open: group[0].open,
+      high: Math.max(...group.map((c) => c.high)),
+      low: Math.min(...group.map((c) => c.low)),
+      close: group[group.length - 1].close,
+      volume: group.reduce((sum, c) => sum + c.volume, 0),
+    });
+  }
+  
+  return result;
+}
+
+export function analyzeCrudeOilStrategy(
+  candles: Candle[],
+  config: StrategyConfig = DEFAULT_CONFIG
+): SignalResult {
+  const minBars = Math.max(config.smaLength, 70) + 5;
+  
+  if (candles.length < minBars) {
+    return {
+      action: 'HOLD',
+      rsi: 50,
+      sma: 0,
+      ema: 0,
+      emaFilterOK: false,
+      signalType: 'NONE',
+      recommendedLeverage: config.minLeverage,
+      message: `Insufficient bars (${candles.length}/${minBars})`,
+    };
+  }
+  
+  const closes = candles.map((c) => c.close);
+  const opens = candles.map((c) => c.open);
+  const highs = candles.map((c) => c.high);
+  const lows = candles.map((c) => c.low);
+  
+  const smaSeries = calculateSMA(closes, config.smaLength);
+  const emaSeries = calculateEMA(closes, config.emaLength);
+  const rsiSeries = calculateRSI(closes, config.rsiLength);
+  
+  const lastBar = candles.length - 1;
+  const prevBar = lastBar - 1;
+  
+  const currentPrice = closes[lastBar];
+  const currentOpen = opens[lastBar];
+  const currentHigh = highs[lastBar];
+  const currentLow = lows[lastBar];
+  const currentClose = closes[lastBar];
+  
+  const prevClose = closes[prevBar];
+  const prevOpen = opens[prevBar];
+  const prevHigh = highs[prevBar];
+  const prevLow = lows[prevBar];
+  
+  const currentSMA = smaSeries[lastBar];
+  const prevSMA = smaSeries[prevBar];
+  const currentEMA = emaSeries[lastBar];
+  const currentRSI = rsiSeries[lastBar];
+
+  const isBullishCandle = currentOpen < currentClose;
+  const isBearishCandle = currentOpen > currentClose;
+  const candleRange = currentHigh - currentLow;
+  
+  // BUY signal: crossover(close[1], sma1) and close[1] > open[1] and high[0] > high[1] and close[0] > open[0]
+  const buySignal = prevClose > prevSMA && 
+                    currentClose > currentSMA &&
+                    prevClose > prevOpen &&
+                    currentHigh > prevHigh &&
+                    isBullishCandle;
+  
+  // SELL signal: crossunder(low[1], sma1) and close[1] < open[1] and low[0] < low[1] and close[0] < open[0]
+  const sellSignal = prevLow < prevSMA &&
+                     currentLow < currentSMA &&
+                     prevClose < prevOpen &&
+                     currentLow < prevLow &&
+                     isBearishCandle;
+  
+  // EMA 200 trend filter
+  const emaFilterOK_BUY = currentPrice > currentEMA;
+  const emaFilterOK_SELL = currentPrice < currentEMA;
+  
+  let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
+  let signalType: 'SMA_CROSS' | 'REVERSAL' | 'NONE' = 'NONE';
+  let message = 'No signal';
+  
+  if (buySignal && emaFilterOK_BUY) {
+    action = 'BUY';
+    signalType = 'SMA_CROSS';
+    message = `BUY signal: Price crossed above SMA ${config.smaLength}, above EMA ${config.emaLength}`;
+  } else if (sellSignal && emaFilterOK_SELL) {
+    action = 'SELL';
+    signalType = 'SMA_CROSS';
+    message = `SELL signal: Price crossed below SMA ${config.smaLength}, below EMA ${config.emaLength}`;
+  } else if (buySignal && !emaFilterOK_BUY) {
+    message = `BUY signal skipped: Price below EMA ${config.emaLength} (trend filter)`;
+  } else if (sellSignal && !emaFilterOK_SELL) {
+    message = `SELL signal skipped: Price above EMA ${config.emaLength} (trend filter)`;
+  }
+  
+  // Calculate ATR for risk management (most recent bars only)
+  const atrPeriod = 14;
   const trs: number[] = [];
   for (let i = 0; i < candles.length; i++) {
     if (i === 0) {
       trs.push(candles[i].high - candles[i].low);
     } else {
-      const prevClose = candles[i - 1].close;
+      const prevC = candles[i - 1].close;
       const tr = Math.max(
         candles[i].high - candles[i].low,
-        Math.abs(candles[i].high - prevClose),
-        Math.abs(candles[i].low - prevClose)
+        Math.abs(candles[i].high - prevC),
+        Math.abs(candles[i].low - prevC)
       );
       trs.push(tr);
     }
   }
 
-  const atr: number[] = new Array(candles.length).fill(0);
-  let sum = 0;
-  for (let i = 0; i < candles.length; i++) {
-    if (i < period) {
-      sum += trs[i];
-      atr[i] = sum / (i + 1);
-    } else if (i === period) {
-      sum += trs[i];
-      atr[i] = sum / period;
-    } else {
-      atr[i] = (atr[i - 1] * (period - 1) + trs[i]) / period;
-    }
-  }
-  return atr;
-}
-
-/**
- * Detects swing highs and swing lows matching TradingView ta.pivothigh / ta.pivotlow
- */
-export function isPivotHigh(highs: number[], index: number, left: number, right: number): boolean {
-  if (index < left || index + right >= highs.length) return false;
-  const target = highs[index];
-  for (let i = index - left; i <= index + right; i++) {
-    if (i !== index && highs[i] >= target) {
-      return false;
-    }
-  }
-  return true;
-}
-
-export function isPivotLow(lows: number[], index: number, left: number, right: number): boolean {
-  if (index < left || index + right >= lows.length) return false;
-  const target = lows[index];
-  for (let i = index - left; i <= index + right; i++) {
-    if (i !== index && lows[i] <= target) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Analyzes market series using Monorid Liquidity Raid quant logic
- */
-export function analyzeLiquidityReaper(
-  candles: Candle[],
-  config: StrategyConfig = DEFAULT_CONFIG
-): SignalResult {
-  if (candles.length < config.pivotLen * 2 + 5) {
-    return {
-      action: 'HOLD',
-      volMultiplier: 1.0,
-      volOK: false,
-      atr: 0,
-      highPoolsCount: 0,
-      lowPoolsCount: 0,
-      pendingSweepText: 'Insufficient bars',
-      recommendedLeverage: config.minLeverage,
-    };
-  }
-
-  const highs = candles.map((c) => c.high);
-  const lows = candles.map((c) => c.low);
-  const closes = candles.map((c) => c.close);
-  const volumes = candles.map((c) => c.volume);
-
-  const atrSeries = calculateATR(candles, config.tpAtrPeriod);
-  const volMASeries = calculateSMA(volumes, config.volLen);
-
-  const highPools: Pool[] = [];
-  const lowPools: Pool[] = [];
-  let pendHigh: PendingSweep | null = null;
-  let pendLow: PendingSweep | null = null;
-
-  let latestSignal: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
-  let sweepLvlSell: number | undefined;
-  let sweepWickSell: number | undefined;
-  let sweepLvlBuy: number | undefined;
-  let sweepWickBuy: number | undefined;
-
-  // Process bar by bar to mirror real-time Pine execution
-  for (let bar = config.pivotLen; bar < candles.length; bar++) {
-    // 1. Pivot registration (at bar - pivotLen)
-    const testPivotBar = bar - config.pivotLen;
-    if (testPivotBar >= config.pivotLen) {
-      if (isPivotHigh(highs, testPivotBar, config.pivotLen, config.pivotLen)) {
-        highPools.push({
-          id: `H_${testPivotBar}`,
-          level: highs[testPivotBar],
-          bornBar: testPivotBar,
-          isHigh: true,
-        });
-        if (highPools.length > config.maxPools) {
-          highPools.shift();
-        }
-      }
-
-      if (isPivotLow(lows, testPivotBar, config.pivotLen, config.pivotLen)) {
-        lowPools.push({
-          id: `L_${testPivotBar}`,
-          level: lows[testPivotBar],
-          bornBar: testPivotBar,
-          isHigh: false,
-        });
-        if (lowPools.length > config.maxPools) {
-          lowPools.shift();
-        }
-      }
-    }
-
-    // 2. Detect Raids intrabar
-    const currHigh = highs[bar];
-    const currLow = lows[bar];
-    const raidRange = Math.max(currHigh - currLow, 0.00000001);
-
-    // High side raid check
-    for (let i = highPools.length - 1; i >= 0; i--) {
-      if (currHigh > highPools[i].level) {
-        pendHigh = {
-          level: highPools[i].level,
-          wickExtreme: currHigh,
-          breakBar: bar,
-          raidRange,
-          isHigh: true,
-        };
-        highPools.splice(i, 1);
-        break;
-      }
-    }
-
-    // Low side raid check
-    for (let i = lowPools.length - 1; i >= 0; i--) {
-      if (currLow < lowPools[i].level) {
-        pendLow = {
-          level: lowPools[i].level,
-          wickExtreme: currLow,
-          breakBar: bar,
-          raidRange,
-          isHigh: false,
-        };
-        lowPools.splice(i, 1);
-        break;
-      }
-    }
-
-    // Track wick extremes
-    if (pendHigh) {
-      pendHigh.wickExtreme = Math.max(pendHigh.wickExtreme, currHigh);
-    }
-    if (pendLow) {
-      pendLow.wickExtreme = Math.min(pendLow.wickExtreme, currLow);
-    }
-
-    // Reset signal on each bar
-    let barSellSignal = false;
-    let barBuySignal = false;
-
-    const currVol = volumes[bar];
-    const currVolMA = volMASeries[bar];
-    const volMult = currVolMA > 0 ? currVol / currVolMA : 1.0;
-    const volOK = !config.useVolFilter || volMult >= config.volMultReq;
-
-    // Confirm sweeps
-    if (pendHigh) {
-      const elapsed = bar - pendHigh.breakBar;
-      const wickPct = ((pendHigh.wickExtreme - pendHigh.level) / pendHigh.raidRange) * 100;
-      const wickOK = wickPct >= config.minWickPct;
-
-      if (elapsed >= 1 && elapsed <= config.confirmWindow) {
-        if (closes[bar] < pendHigh.level && closes[bar] < candles[bar].open && volOK && wickOK) {
-          barSellSignal = true;
-          sweepLvlSell = pendHigh.level;
-          sweepWickSell = pendHigh.wickExtreme;
-          pendHigh = null;
-        }
-      } else if (elapsed > config.confirmWindow) {
-        pendHigh = null;
-      }
-    }
-
-    if (pendLow) {
-      const elapsed = bar - pendLow.breakBar;
-      const wickPct = ((pendLow.level - pendLow.wickExtreme) / pendLow.raidRange) * 100;
-      const wickOK = wickPct >= config.minWickPct;
-
-      if (elapsed >= 1 && elapsed <= config.confirmWindow) {
-        if (closes[bar] > pendLow.level && closes[bar] > candles[bar].open && volOK && wickOK) {
-          barBuySignal = true;
-          sweepLvlBuy = pendLow.level;
-          sweepWickBuy = pendLow.wickExtreme;
-          pendLow = null;
-        }
-      } else if (elapsed > config.confirmWindow) {
-        pendLow = null;
-      }
-    }
-
-    if (barBuySignal) latestSignal = 'BUY';
-    else if (barSellSignal) latestSignal = 'SELL';
-    else latestSignal = 'HOLD';
-  }
-
-  // Final bar calculations
-  const lastBar = candles.length - 1;
-  const currentPrice = closes[lastBar];
-  const lastAtr = atrSeries[lastBar] || currentPrice * 0.01;
-  const lastVol = volumes[lastBar];
-  const lastVolMA = volMASeries[lastBar] || 1;
-  const volMultiplier = lastVolMA > 0 ? lastVol / lastVolMA : 1.0;
-  const volOK = !config.useVolFilter || volMultiplier >= config.volMultReq;
-
-  // Nearest pools
-  let nearestAbove: number | undefined;
-  for (const p of highPools) {
-    if (p.level > currentPrice && (nearestAbove === undefined || p.level < nearestAbove)) {
-      nearestAbove = p.level;
-    }
-  }
-
-  let nearestBelow: number | undefined;
-  for (const p of lowPools) {
-    if (p.level < currentPrice && (nearestBelow === undefined || p.level > nearestBelow)) {
-      nearestBelow = p.level;
-    }
-  }
-
-  const distAboveAtr = nearestAbove && lastAtr > 0 ? (nearestAbove - currentPrice) / lastAtr : undefined;
-  const distBelowAtr = nearestBelow && lastAtr > 0 ? (currentPrice - nearestBelow) / lastAtr : undefined;
-
-  // Adaptive leverage based on ATR volatility:
-  // Low volatility assets can support 15x, higher volatility scaled to 10x-12x
-  const atrPct = (lastAtr / currentPrice) * 100;
-  let recommendedLeverage = 12;
-  if (atrPct < 0.8) recommendedLeverage = 15;
-  else if (atrPct > 2.0) recommendedLeverage = 10;
-  else recommendedLeverage = 12;
-
-  // Risk dist calculation
-  const riskDist = config.useAtrSl ? lastAtr * config.slAtrMult : currentPrice * (config.slPercent / 100);
-
+  const recentTrs = trs.slice(-atrPeriod);
+  const atr = recentTrs.reduce((sum, tr) => sum + tr, 0) / recentTrs.length;
+  
+  const riskDist = atr * 1.5;
+  
   let slLevel: number | undefined;
   let tp1Level: number | undefined;
   let tp2Level: number | undefined;
   let tp3Level: number | undefined;
-
-  if (latestSignal === 'BUY') {
+  
+  if (action === 'BUY') {
     slLevel = currentPrice - riskDist;
     tp1Level = currentPrice + riskDist * config.rrTp1;
     tp2Level = currentPrice + riskDist * config.rrTp2;
     tp3Level = currentPrice + riskDist * config.rrTp3;
-  } else if (latestSignal === 'SELL') {
+  } else if (action === 'SELL') {
     slLevel = currentPrice + riskDist;
     tp1Level = currentPrice - riskDist * config.rrTp1;
     tp2Level = currentPrice - riskDist * config.rrTp2;
     tp3Level = currentPrice - riskDist * config.rrTp3;
   }
-
-  const pendingSweepText = pendHigh
-    ? 'High-side raid live (Sell Pending)'
-    : pendLow
-    ? 'Low-side raid live (Buy Pending)'
-    : 'None active';
-
+  
+  const atrPct = (atr / currentPrice) * 100;
+  let recommendedLeverage = 12;
+  if (atrPct < 0.8) recommendedLeverage = 15;
+  else if (atrPct > 2.0) recommendedLeverage = 10;
+  
   return {
-    action: latestSignal,
-    sweepLevel: latestSignal === 'BUY' ? sweepLvlBuy : sweepLvlSell,
-    sweepWick: latestSignal === 'BUY' ? sweepWickBuy : sweepWickSell,
+    action,
     entryPrice: currentPrice,
     slLevel,
     tp1Level,
     tp2Level,
     tp3Level,
     riskDist,
-    volMultiplier: Number(volMultiplier.toFixed(2)),
-    volOK,
-    atr: Number(lastAtr.toFixed(4)),
-    highPoolsCount: highPools.length,
-    lowPoolsCount: lowPools.length,
-    nearestAbove,
-    nearestBelow,
-    distAboveAtr: distAboveAtr ? Number(distAboveAtr.toFixed(2)) : undefined,
-    distBelowAtr: distBelowAtr ? Number(distBelowAtr.toFixed(2)) : undefined,
-    pendingSweepText,
+    rsi: Number(currentRSI.toFixed(2)),
+    sma: Number(currentSMA.toFixed(4)),
+    ema: Number(currentEMA.toFixed(4)),
+    emaFilterOK: action !== 'HOLD',
+    signalType,
     recommendedLeverage,
+    message,
   };
 }
 
-/**
- * Calculates Partial TP Execution breakdown:
- * When TP1 hit: 25% closed
- * When TP2 hit: 50% closed
- * When TP3 hit: 100% closed (remaining)
- */
 export function calculatePositionExitQuantity(
   initialSize: number,
   targetStage: 'TP1' | 'TP2' | 'TP3' | 'SL'
@@ -436,16 +322,14 @@ export function calculatePositionExitQuantity(
     };
   }
   if (targetStage === 'TP2') {
-    // 50% of original total size closed at TP2
     const closeQty = initialSize * 0.5;
     return {
       closeFraction: 0.5,
       closeQty,
-      remainingQty: initialSize * 0.25, // remaining for TP3
+      remainingQty: initialSize * 0.25,
     };
   }
   if (targetStage === 'TP3' || targetStage === 'SL') {
-    // Full close of remaining
     return {
       closeFraction: 1.0,
       closeQty: initialSize,

@@ -12,7 +12,7 @@ import {
   Layers,
   Cpu,
 } from 'lucide-react';
-import { MonoridLogo } from './MonoridLogo';
+import { MiroStyleLogo } from './MiroStyleLogo';
 
 export interface BotUnit {
   id: string;
@@ -33,7 +33,8 @@ interface BotConstellationProps {
   isAutoTrading: boolean;
   totalPnl: number;
   openPositionsCount: number;
-  onOpenLogoMotion?: () => void;
+  onOpenLiveTrades: () => void;
+  onOpenBotWork: (botId: string) => void;
 }
 
 // Custom icons mapping per strategy
@@ -55,7 +56,8 @@ export function BotConstellation({
   isAutoTrading,
   totalPnl,
   openPositionsCount,
-  onOpenLogoMotion,
+  onOpenLiveTrades,
+  onOpenBotWork,
 }: BotConstellationProps) {
   // 8 orbital angles evenly spaced (every 45 degrees, starting from 270 at 12 o'clock)
   const angles = [270, 315, 0, 45, 90, 135, 180, 225];
@@ -137,36 +139,30 @@ export function BotConstellation({
         })}
       </svg>
 
-      {/* Central Core: MONORID CORE exactly matching user uploaded reference */}
+      {/* Central Core: MONORID CORE with Miro-Style Motion Graphics */}
       <div className="relative z-20 flex flex-col items-center justify-center">
         <motion.div
-          onClick={onOpenLogoMotion}
-          title={onOpenLogoMotion ? 'Click to inspect Miro Logo Animation & Grid Breakdown' : undefined}
           animate={{ scale: [1, 1.025, 1] }}
           transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
-          className={`relative w-36 h-36 sm:w-40 sm:h-40 rounded-full bg-gradient-to-b from-[#0b172e] via-[#071324] to-[#030914] border-2 border-cyan-400/80 shadow-[0_0_35px_rgba(6,182,212,0.4)] flex flex-col items-center justify-center p-2.5 text-center group ${
-            onOpenLogoMotion ? 'cursor-pointer' : ''
-          }`}
+          className="relative"
         >
-          {/* Orbital Satellite Dots on the perimeter */}
-          <span className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_#22d3ee]"></span>
-          <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_#22d3ee]"></span>
-          <span className="absolute top-1/2 -left-1 -translate-y-1/2 w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_#22d3ee]"></span>
-          <span className="absolute top-1/2 -right-1 -translate-y-1/2 w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_#22d3ee]"></span>
+          <MiroStyleLogo
+            size="lg"
+            animated={true}
+            onClick={onOpenLiveTrades}
+          />
 
-          {/* Central Trending Icon Emblem */}
-          <div className="w-10 h-10 rounded-full bg-gradient-to-b from-cyan-900/60 to-slate-900/90 border border-cyan-400/70 flex items-center justify-center shadow-[0_0_16px_rgba(6,182,212,0.4)] group-hover:border-cyan-300 transition-colors">
-            <TrendingUp className="w-5 h-5 text-cyan-300" />
-          </div>
-
-          <span className="mt-2 text-xs font-black tracking-widest text-cyan-300 font-mono">
-            MONORID
-          </span>
-          <span className="text-[8px] font-bold tracking-widest text-slate-200 font-mono uppercase">
-            FULL AUTOMATION
-          </span>
-          <div className="mt-1 flex items-center gap-1 text-[8.5px] font-mono text-emerald-400 bg-emerald-950/90 px-2.5 py-0.5 rounded border border-emerald-500/60 shadow-[0_0_8px_rgba(16,185,129,0.2)]">
-            <span>{openPositionsCount}/8 SLOTS</span>
+          {/* Label below logo */}
+          <div className="absolute -bottom-16 left-1/2 -translate-x-1/2 flex flex-col items-center text-center whitespace-nowrap">
+            <span className="text-xs font-black tracking-widest text-cyan-300 font-mono">
+              MONORID
+            </span>
+            <span className="text-[8px] font-bold tracking-widest text-slate-200 font-mono uppercase">
+              FULL AUTOMATION
+            </span>
+            <div className="mt-1 flex items-center gap-1 text-[8.5px] font-mono text-emerald-400 bg-emerald-950/90 px-2.5 py-0.5 rounded border border-emerald-500/60 shadow-[0_0_8px_rgba(16,185,129,0.2)]">
+              <span>{openPositionsCount}/8 SLOTS</span>
+            </div>
           </div>
         </motion.div>
       </div>
@@ -189,7 +185,10 @@ export function BotConstellation({
             style={{
               transform: `translate(${xOffset}px, ${yOffset}px)`,
             }}
-            onClick={() => onSelectBot(isSelected ? null : bot.id)}
+            onClick={() => {
+              onSelectBot(bot.id);
+              onOpenBotWork(bot.id);
+            }}
             className={`absolute z-30 cursor-pointer transition-all duration-300 group ${
               isSelected ? 'scale-110 z-40' : 'hover:scale-105'
             }`}
@@ -240,12 +239,6 @@ export function BotConstellation({
           </div>
         );
       })}
-
-      {/* Bottom overlay helper */}
-      <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 text-[10px] font-mono text-slate-400/90 bg-slate-950/85 px-3 py-1 rounded-full border border-slate-800/70 pointer-events-none flex items-center gap-2 whitespace-nowrap shadow-md">
-        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
-        <span>8 Autonomous Bots • Maximum 8 Positions Open Simultaneously</span>
-      </div>
     </div>
   );
 }
