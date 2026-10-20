@@ -771,6 +771,34 @@ export default function Home() {
             price: tradePrice,
             message: `[AUTO-REVERT] ${botDisplayName} position on ${symbol} reverted — MEXC order failed: ${result.message}. Slot freed.`,
           });
+        } else {
+          // Order succeeded — wait briefly for position to fill, then set TP/SL on exchange automatically
+          const positionType = side === 'BUY' ? 1 : 2; // 1=Long, 2=Short
+          setTimeout(() => {
+            executeMexcTpsl(symbol, positionType, tp3Price, slPrice, contractVol, 1).then((tpslResult) => {
+              if (tpslResult.success) {
+                console.log('[MEXC] TP/SL set automatically for', symbol);
+                addLog({
+                  groupName,
+                  symbol,
+                  type: 'ENTRY',
+                  side: newPosition.side,
+                  price: tradePrice,
+                  message: `[AUTO-TP/SL] Exchange TP/SL set: SL=$${slPrice.toFixed(4)}, TP=$${tp3Price.toFixed(4)} for ${contractVol} contracts.`,
+                });
+              } else {
+                console.warn('[MEXC] TP/SL setup failed:', tpslResult.message);
+                addLog({
+                  groupName,
+                  symbol,
+                  type: 'ENTRY',
+                  side: newPosition.side,
+                  price: tradePrice,
+                  message: `[WARNING] TP/SL setup failed on exchange: ${tpslResult.message}. Client-side monitoring active.`,
+                });
+              }
+            });
+          }, 1500); // Wait 1.5s for position to fill on exchange
         }
       });
     }
