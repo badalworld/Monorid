@@ -59,8 +59,9 @@ export function BotConstellation({
   onOpenLiveTrades,
   onOpenBotWork,
 }: BotConstellationProps) {
-  // 8 orbital angles evenly spaced (every 45 degrees, starting from 270 at 12 o'clock)
-  const angles = [270, 315, 0, 45, 90, 135, 180, 225];
+  const activeBots = bots.filter((b) => b.status === 'HOLDING' && b.currentSymbol);
+  const count = Math.max(activeBots.length, 1);
+  const angles = Array.from({ length: count }, (_, i) => 270 + (360 / count) * i);
 
   return (
     <div className="relative w-full max-w-3xl mx-auto h-[510px] sm:h-[530px] flex items-center justify-center overflow-hidden rounded-2xl border border-cyan-950/70 bg-gradient-to-b from-[#081022]/90 via-[#060a16]/95 to-[#04060d] p-4 cyber-grid">
@@ -98,7 +99,6 @@ export function BotConstellation({
 
           return (
             <g key={`conduit-${i}`}>
-              {/* Static conduit line */}
               <line
                 x1={cx}
                 y1={cy}
@@ -109,7 +109,6 @@ export function BotConstellation({
                 strokeDasharray="4 4"
                 opacity="0.5"
               />
-              {/* Animated energy pulse circle traveling along the line */}
               {isAutoTrading && (
                 <circle r="2.5" fill="#22d3ee" filter="url(#conduitGlow)">
                   <animate
@@ -161,14 +160,14 @@ export function BotConstellation({
               FULL AUTOMATION
             </span>
             <div className="mt-1 flex items-center gap-1 text-[8.5px] font-mono text-emerald-400 bg-emerald-950/90 px-2.5 py-0.5 rounded border border-emerald-500/60 shadow-[0_0_8px_rgba(16,185,129,0.2)]">
-              <span>{openPositionsCount}/8 SLOTS</span>
+              <span>{openPositionsCount} ACTIVE</span>
             </div>
           </div>
         </motion.div>
       </div>
 
-      {/* 8 Orbital Autonomous Units (STRICTLY strategy names: Apex Momentum, Mean Reversion, etc. - NO "BOT 01" / "BOT 02") */}
-      {bots.map((bot, index) => {
+      {/* Active Orbital Units — only bots with open positions */}
+      {activeBots.map((bot, index) => {
         const deg = angles[index % angles.length];
         const rad = (deg * Math.PI) / 180;
         const radiusPx = 190;

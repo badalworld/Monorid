@@ -17,18 +17,24 @@ import {
 import { MexcTicker, ASSET_GROUPS } from '@/lib/mexc';
 import { SignalResult } from '@/lib/strategy';
 
-interface ScannedAssetInfo {
-  ticker: MexcTicker;
-  analysis?: SignalResult;
-  isScanning?: boolean;
-}
-
 interface MarketScannerProps {
   tickers: MexcTicker[];
   scanResults: Record<string, SignalResult>;
   onViewChart: (symbol: string) => void;
   onRefreshScan: () => void;
   isScanningBatch: boolean;
+  nonActivatedContracts?: Set<string>;
+  lossCooldowns?: Map<string, number>;
+}
+
+function formatCryptoPrice(val?: number) {
+  if (val === undefined || val === null || isNaN(val)) return '—';
+  if (val === 0) return '$0.00';
+  const abs = Math.abs(val);
+  if (abs < 0.0001) return `$${val.toFixed(8)}`;
+  if (abs < 0.01) return `$${val.toFixed(6)}`;
+  if (abs < 1) return `$${val.toFixed(4)}`;
+  return `$${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function MarketScanner({
@@ -37,6 +43,8 @@ export function MarketScanner({
   onViewChart,
   onRefreshScan,
   isScanningBatch,
+  nonActivatedContracts,
+  lossCooldowns,
 }: MarketScannerProps) {
   const [selectedGroup, setSelectedGroup] = useState<string>('Apex Cyber-Volatiles');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -55,10 +63,10 @@ export function MarketScanner({
             <div className="flex items-center gap-2">
               <Scan className="w-5 h-5 text-cyan-400" />
               <h2 className="text-base font-mono font-bold text-white tracking-wide">
-                AUTOMATED 3M MARKET SCANNER (75 FUTURES CONTRACTS)
+                AUTOMATED 1M MARKET SCANNER (90 FUTURES CONTRACTS)
               </h2>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-700/60 font-semibold">
-                15 ASSETS / GROUP
+                15 ASSETS / GROUP • 6 GROUPS
               </span>
             </div>
           </div>
@@ -83,13 +91,13 @@ export function MarketScanner({
               className="flex w-36 shrink-0 items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 text-xs font-mono font-semibold transition-all disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isScanningBatch ? 'animate-spin' : ''}`} />
-              <span>{isScanningBatch ? 'Scanning...' : 'Rescan 3M'}</span>
+              <span>{isScanningBatch ? 'Scanning...' : 'Rescan 1M'}</span>
             </button>
           </div>
         </div>
 
         {/* Group Selector Pills (fits visible area, no horizontal overflow) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 pt-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 pt-3">
           {ASSET_GROUPS.map((grp, index) => {
             const count = tickers.filter((t) => t.groupName === grp.name).length;
             const isSelected = selectedGroup === grp.name && !searchQuery;
@@ -105,7 +113,7 @@ export function MarketScanner({
                 className={`flex items-center justify-center gap-2 min-w-0 px-2.5 py-2 rounded-lg text-[11px] font-mono transition-all border ${
                   isSelected
                     ? 'bg-cyan-950/80 border-cyan-400 text-white shadow-sm glow-cyan font-bold'
-                    : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-850'
+                    : 'bg-slate-900/60 border-slate-850 text-slate-400 hover:text-slate-200 hover:bg-slate-850'
                 }`}
               >
                 <span className="truncate">GROUP 0{index + 1}: {grp.name}</span>
@@ -162,7 +170,7 @@ export function MarketScanner({
                 )}
                 {!hasSignal && (
                   <span className="px-1.5 py-0.5 rounded font-mono text-[10px] bg-slate-900 text-slate-400 border border-slate-800">
-                    SCANNING 3M
+                    SCANNING 1M
                   </span>
                 )}
               </div>
@@ -172,7 +180,7 @@ export function MarketScanner({
                 <div>
                   <span className="text-[10px] text-slate-400 block">Mark Price</span>
                   <span className="font-bold text-white text-sm">
-                    ${ticker.lastPrice < 0.01 ? ticker.lastPrice.toFixed(6) : ticker.lastPrice.toLocaleString()}
+                    {formatCryptoPrice(ticker.lastPrice)}
                   </span>
                 </div>
                 <div className="text-right">
@@ -187,54 +195,69 @@ export function MarketScanner({
               {/* Strategy Engine Telemetry */}
               <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-850 space-y-1.5 text-[11px] font-mono">
                 <div className="flex justify-between items-center text-slate-300">
-                  <span className="text-slate-400">RSI ({analysis?.rsi ?? 50}):</span>
-                  <span className={`font-semibold ${
-                    (analysis?.rsi ?? 50) > 70 ? 'text-rose-400' : (analysis?.rsi ?? 50) < 30 ? 'text-emerald-400' : 'text-slate-300'
-                  }`}>
-                    {(analysis?.rsi ?? 50).toFixed(1)}
+                  <span className="text-slate-400">Cipher B (WT1 / WT2):</span>
+                  <span className="font-semibold text-cyan-300">
+                    {analysis?.wt1 !== undefined ? `${analysis.wt1.toFixed(1)} / ${analysis.wt2.toFixed(1)}` : '—'}
                   </span>
                 </div>
 
                 <div className="flex justify-between items-center text-slate-300">
-                  <span className="text-slate-400">SMA {analysis?.sma ? `(${analysis.sma.toFixed(2)})` : ''}:</span>
-                  <span className={`font-semibold ${
-                    analysis?.emaFilterOK ? 'text-emerald-400' : 'text-slate-400'
+                  <span className="text-slate-400">Cipher B Dot:</span>
+                  <span className={`font-bold px-1.5 py-0.2 rounded text-[10px] ${
+                    analysis?.cipherDot === 'GREEN'
+                      ? 'bg-emerald-950 border border-emerald-500 text-emerald-300 animate-pulse'
+                      : analysis?.cipherDot === 'RED'
+                      ? 'bg-rose-950 border border-rose-500 text-rose-300 animate-pulse'
+                      : 'bg-slate-900 text-slate-400'
                   }`}>
-                    {analysis?.emaFilterOK ? '✓ CONFIRMED' : '✗ FILTERED'}
+                    {analysis?.cipherDot === 'GREEN' ? '🟢 GREEN DOT (OS)' : analysis?.cipherDot === 'RED' ? '🔴 RED DOT (OB)' : 'NEUTRAL'}
                   </span>
                 </div>
 
                 <div className="flex justify-between items-center text-slate-300">
                   <span className="text-slate-400">EMA 200:</span>
-                  <span className="text-cyan-400 font-semibold">
-                    ${analysis?.ema?.toFixed(2) ?? '—'}
+                  <span className={`font-semibold ${
+                    (ticker.lastPrice || 0) >= (analysis?.ema || 0) ? 'text-emerald-400' : 'text-rose-400'
+                  }`}>
+                    {formatCryptoPrice(analysis?.ema)}
+                    <span className="text-[9px] ml-1 opacity-80">
+                      {(ticker.lastPrice || 0) >= (analysis?.ema || 0) ? '(Above)' : '(Below)'}
+                    </span>
                   </span>
                 </div>
 
                 <div className="flex justify-between items-center text-slate-300">
                   <span className="text-slate-400">Leverage / Sizing:</span>
                   <span className="text-emerald-400 font-bold">
-                    {analysis?.recommendedLeverage ?? 12}x • 10% Equity
+                    {analysis?.recommendedLeverage ?? 7}x • 10% Equity
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center text-slate-300">
+                  <span className="text-slate-400">Confidence Score:</span>
+                  <span className={`font-bold flex items-center gap-1.5 ${
+                    (analysis?.confidence ?? 0) >= 80 ? 'text-emerald-300' : 'text-amber-400'
+                  }`}>
+                    {analysis?.confidence ?? 0}%
+                    <span className={`text-[8px] px-1 py-0.2 rounded font-mono font-bold uppercase tracking-wider ${
+                      (analysis?.confidence ?? 0) >= 80
+                        ? 'bg-emerald-950/80 border border-emerald-500/40 text-emerald-300'
+                        : 'bg-amber-950/80 border border-amber-500/40 text-amber-300'
+                    }`}>
+                      {(analysis?.confidence ?? 0) >= 80 ? '≥ 80%' : '< 80%'}
+                    </span>
                   </span>
                 </div>
 
                 {hasSignal && (
                   <div className="pt-1 border-t border-slate-800 space-y-0.5 text-[10px]">
                     <div className="flex justify-between text-rose-400">
-                      <span>🛑 SL:</span>
-                      <span className="font-semibold">${analysis?.slLevel?.toFixed(4)}</span>
+                      <span>🛑 SL (EMA 200):</span>
+                      <span className="font-semibold">{formatCryptoPrice(analysis?.slLevel)}</span>
                     </div>
-                    <div className="flex justify-between text-emerald-400">
-                      <span>🎯 TP1 (25%):</span>
-                      <span className="font-semibold">${analysis?.tp1Level?.toFixed(4)}</span>
-                    </div>
-                    <div className="flex justify-between text-emerald-300">
-                      <span>🎯 TP2 (50%):</span>
-                      <span className="font-semibold">${analysis?.tp2Level?.toFixed(4)}</span>
-                    </div>
-                    <div className="flex justify-between text-cyan-300 font-bold">
-                      <span>🏆 TP3 (Full):</span>
-                      <span>${analysis?.tp3Level?.toFixed(4)}</span>
+                    <div className="flex justify-between text-emerald-400 font-bold">
+                      <span>🎯 TP (1:2 Target • 100%):</span>
+                      <span className="font-semibold">{formatCryptoPrice(analysis?.tpLevel || analysis?.tp1Level)}</span>
                     </div>
                   </div>
                 )}
@@ -247,24 +270,52 @@ export function MarketScanner({
                   className="flex-1 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-slate-300 flex items-center justify-center gap-1 transition-colors"
                 >
                   <Eye className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Inspect 3M Chart</span>
+                  <span>Inspect 1M Chart</span>
                 </button>
 
                 {hasSignal ? (
-                  <div
-                    className={`flex-1 py-1.5 rounded-lg text-[10px] font-mono font-bold flex items-center justify-center gap-1 border ${
-                      hasBuy
-                        ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300'
-                        : 'bg-rose-950/80 border-rose-500/60 text-rose-300'
-                    }`}
-                  >
-                    <Zap className="w-3 h-3 text-cyan-400 animate-pulse" />
-                    <span>AUTO-DISPATCHED</span>
-                  </div>
+                  nonActivatedContracts?.has(ticker.symbol) ? (
+                    <div
+                      title="MEXC API execution disabled for this contract by exchange (apiAllowed: false)"
+                      className="flex-1 py-1.5 px-2 rounded-lg text-[10px] font-mono font-bold flex items-center justify-center gap-1 border bg-amber-950/80 border-amber-500/60 text-amber-300"
+                    >
+                      <Shield className="w-3 h-3 text-amber-400 shrink-0" />
+                      <span className="truncate">MEXC API RESTRICTED</span>
+                    </div>
+                  ) : lossCooldowns && lossCooldowns.has(ticker.symbol) && (lossCooldowns.get(ticker.symbol)! > Date.now()) ? (
+                    <div
+                      title="Post-loss protection active: coin is paused for 30 minutes following a Stop Loss to prevent revenge churn"
+                      className="flex-1 py-1.5 px-2 rounded-lg text-[10px] font-mono font-bold flex items-center justify-center gap-1 border bg-blue-950/80 border-blue-500/60 text-blue-300"
+                    >
+                      <Shield className="w-3 h-3 text-blue-400 shrink-0" />
+                      <span className="truncate">COOLDOWN ({Math.ceil((lossCooldowns.get(ticker.symbol)! - Date.now()) / 60000)}m)</span>
+                    </div>
+                  ) : (analysis?.confidence ?? 0) < 80 ? (
+                    <div
+                      title="Trade not executed: Confidence score is below 80%. Required: ≥ 80%"
+                      className="flex-1 py-1.5 px-2 rounded-lg text-[10px] font-mono font-bold flex items-center justify-center gap-1 border bg-amber-950/80 border-amber-500/60 text-amber-300"
+                    >
+                      <Shield className="w-3 h-3 text-amber-400 shrink-0" />
+                      <span className="truncate">FILTERED (Score &lt; 80%)</span>
+                    </div>
+                  ) : (
+                    <div
+                      className={`flex-1 py-1.5 px-2 rounded-lg text-[10px] font-mono font-bold flex items-center justify-center gap-1 border ${
+                        hasBuy
+                          ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300'
+                          : 'bg-rose-950/80 border-rose-500/60 text-rose-300'
+                      }`}
+                    >
+                      <Zap className="w-3 h-3 text-cyan-400 animate-pulse shrink-0" />
+                      <span className="truncate">
+                        {analysis?.candleTiming === 'SAME_CANDLE' ? '⚡ EXEC (>75%)' : 'AUTO-DISPATCH (>75%)'}
+                      </span>
+                    </div>
+                  )
                 ) : (
                   <div className="flex-1 py-1.5 rounded-lg bg-slate-900/60 border border-slate-850 text-[10px] font-mono text-slate-400 flex items-center justify-center gap-1">
                     <Scan className="w-3 h-3 text-cyan-500" />
-                    <span>SCANNING 3M SIGNALS</span>
+                    <span>SCANNING 1M SIGNALS</span>
                   </div>
                 )}
               </div>

@@ -5,11 +5,13 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const { apiKey, secretKey } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const apiKey = process.env.MEXC_API_KEY || body.apiKey || '';
+    const secretKey = process.env.MEXC_SECRET_KEY || body.secretKey || '';
 
     if (!apiKey || !secretKey) {
       return NextResponse.json(
-        { success: false, error: 'API Key and Secret Key are required.' },
+        { success: false, error: 'MEXC API credentials not configured.' },
         { status: 400 }
       );
     }

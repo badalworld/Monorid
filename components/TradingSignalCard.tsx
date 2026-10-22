@@ -17,7 +17,6 @@ export interface ActiveSignalItem {
   tp2: number;
   tp3: number;
   rsi: number;
-  emaFilterOK: boolean;
   timestamp: number;
   status: 'ACTIVE' | 'EXECUTED';
   retryCount: number;
@@ -78,10 +77,19 @@ export function TradingSignalCard({
           </span>
         </div>
         <div className="text-right">
-          <span className="text-[10px] text-slate-400 block">Confidence</span>
-          <span className="font-bold text-cyan-300 flex items-center justify-end gap-1">
-            <Zap className="w-3 h-3 text-cyan-400" />
+          <span className="text-[10px] text-slate-400 block">Confidence Score</span>
+          <span className={`font-bold flex items-center justify-end gap-1 ${
+            signal.confidence >= 80 ? 'text-emerald-300' : 'text-amber-400'
+          }`}>
+            <Zap className={`w-3 h-3 ${signal.confidence >= 80 ? 'text-emerald-400' : 'text-amber-400'}`} />
             {signal.confidence}%
+            <span className={`text-[8px] px-1 py-0.5 rounded font-mono font-bold uppercase tracking-wider ${
+              signal.confidence >= 80
+                ? 'bg-emerald-950/80 border border-emerald-500/40 text-emerald-300'
+                : 'bg-amber-950/80 border border-amber-500/40 text-amber-300'
+            }`}>
+              {signal.confidence >= 80 ? 'Passed (≥80)' : 'Blocked (<80)'}
+            </span>
           </span>
         </div>
       </div>
@@ -90,27 +98,15 @@ export function TradingSignalCard({
       <div className="p-2 rounded bg-slate-950/70 border border-slate-850 text-[10px] font-mono space-y-1 mb-2.5">
         <div className="flex justify-between items-center text-rose-400">
           <span className="flex items-center gap-1">
-            <Shield className="w-3 h-3" /> SL:
+            <Shield className="w-3 h-3" /> Stop Loss (EMA 200):
           </span>
           <span className="font-semibold">${signal.sl < 0.01 ? signal.sl.toFixed(6) : signal.sl.toFixed(2)}</span>
         </div>
-        <div className="flex justify-between items-center text-emerald-400">
+        <div className="flex justify-between items-center text-emerald-400 font-bold">
           <span className="flex items-center gap-1">
-            <Target className="w-3 h-3" /> TP1 (25%):
+            <Target className="w-3 h-3 text-emerald-400" /> Take Profit (1:2 Target • 100% Exit):
           </span>
-          <span className="font-semibold">${signal.tp1 < 0.01 ? signal.tp1.toFixed(6) : signal.tp1.toFixed(2)}</span>
-        </div>
-        <div className="flex justify-between items-center text-emerald-300">
-          <span className="flex items-center gap-1">
-            <Target className="w-3 h-3" /> TP2 (50%):
-          </span>
-          <span className="font-semibold">${signal.tp2 < 0.01 ? signal.tp2.toFixed(6) : signal.tp2.toFixed(2)}</span>
-        </div>
-        <div className="flex justify-between items-center text-cyan-300 font-bold">
-          <span className="flex items-center gap-1">
-            <Target className="w-3 h-3 text-cyan-400" /> TP3 (Full):
-          </span>
-          <span>${signal.tp3 < 0.01 ? signal.tp3.toFixed(6) : signal.tp3.toFixed(2)}</span>
+          <span className="font-semibold text-emerald-300">${(signal.analysis?.tpLevel || signal.tp1) < 0.01 ? (signal.analysis?.tpLevel || signal.tp1).toFixed(6) : (signal.analysis?.tpLevel || signal.tp1).toFixed(2)}</span>
         </div>
       </div>
 
@@ -121,17 +117,27 @@ export function TradingSignalCard({
           className="flex-1 py-1.5 px-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-[11px] font-mono text-slate-300 flex items-center justify-center gap-1 transition-colors"
         >
           <Eye className="w-3.5 h-3.5 text-cyan-400" />
-          <span>Inspect 3M Chart</span>
+          <span>Inspect 1M Chart</span>
         </button>
 
-        <div className={`flex-1 py-1.5 px-2 rounded-lg text-[10px] font-mono font-bold flex items-center justify-center gap-1 border ${
-          isBuy
-            ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-300'
-            : 'bg-rose-950/80 border-rose-500/50 text-rose-300'
-        }`}>
-          <Zap className="w-3 h-3 text-cyan-400 animate-pulse" />
-          <span>AUTO-EXECUTING</span>
-        </div>
+        {signal.confidence >= 80 ? (
+          <div className={`flex-1 py-1.5 px-2 rounded-lg text-[10px] font-mono font-bold flex items-center justify-center gap-1 border ${
+            isBuy
+              ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-300'
+              : 'bg-rose-950/80 border-rose-500/50 text-rose-300'
+          }`}>
+            <Zap className="w-3 h-3 text-cyan-400 animate-pulse" />
+            <span>AUTO-EXECUTING (&ge;80%)</span>
+          </div>
+        ) : (
+          <div
+            title="Trade execution blocked: High-conviction threshold requires confidence score >= 80%"
+            className="flex-1 py-1.5 px-2 rounded-lg text-[10px] font-mono font-bold flex items-center justify-center gap-1 border bg-amber-950/80 border-amber-500/50 text-amber-300"
+          >
+            <Shield className="w-3 h-3 text-amber-400" />
+            <span>BLOCKED (&lt;80%)</span>
+          </div>
+        )}
       </div>
     </div>
   );

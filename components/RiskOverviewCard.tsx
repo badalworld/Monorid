@@ -5,6 +5,7 @@ import { ShieldAlert, PieChart, Layers, Gauge } from 'lucide-react';
 
 interface RiskOverviewCardProps {
   equity: number;
+  availableBalance?: number | null;
   marginUsed: number;
   portfolioRiskPct: number;
   maxDrawdownPct: number;
@@ -13,12 +14,14 @@ interface RiskOverviewCardProps {
 
 export function RiskOverviewCard({
   equity,
+  availableBalance,
   marginUsed,
   portfolioRiskPct,
   maxDrawdownPct,
   activePositionsCount,
 }: RiskOverviewCardProps) {
-  const freeMargin = Math.max(0, equity - marginUsed);
+  const freeMargin = availableBalance !== undefined && availableBalance !== null ? availableBalance : Math.max(0, equity - marginUsed);
+  const isBalanceLow = (availableBalance !== undefined && availableBalance !== null && availableBalance < 0.70) || ((availableBalance === undefined || availableBalance === null) && equity > 0 && equity < 0.70);
   const marginPct = equity > 0 ? (marginUsed / equity) * 100 : 0;
   const freePct = 100 - marginPct;
 
@@ -36,8 +39,16 @@ export function RiskOverviewCard({
             Risk & Portfolio
           </span>
         </div>
-        <div className="text-[10px] font-mono text-emerald-400 font-bold">
-          MAX 10% / TRADE
+        <div className="flex items-center gap-1.5">
+          {isBalanceLow ? (
+            <span className="text-[10px] font-mono text-rose-400 font-bold bg-rose-500/20 px-1.5 py-0.5 rounded border border-rose-500/40">
+              SAFETY: &lt; $0.70
+            </span>
+          ) : (
+            <span className="text-[10px] font-mono text-emerald-400 font-bold">
+              MAX 20% / TRADE
+            </span>
+          )}
         </div>
       </div>
 

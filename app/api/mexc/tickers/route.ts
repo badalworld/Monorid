@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
-import { fetchMexcFuturesTickers, ASSET_GROUPS } from '@/lib/mexc';
+import { fetchMexcFuturesTickers, ASSET_GROUPS, getStaticFallbackTickers } from '@/lib/mexc';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const tickers = await fetchMexcFuturesTickers();
+    let tickers = await fetchMexcFuturesTickers();
+    if (!tickers || tickers.length === 0) {
+      tickers = getStaticFallbackTickers();
+    }
     return NextResponse.json({
       success: true,
       timestamp: Date.now(),
@@ -14,9 +17,17 @@ export async function GET() {
       tickers,
     });
   } catch (error: any) {
-    return NextResponse.json(
-      { success: false, error: error?.message || 'Failed to fetch futures tickers' },
-      { status: 500 }
-    );
+    console.error('[API /api/mexc/tickers] Exception during ticker fetch:', error);
+    const fallbackTickers = getStaticFallbackTickers();
+    return NextResponse.json({
+      success: true,
+      timestamp: Date.now(),
+      groups: ASSET_GROUPS,
+      count: fallbackTickers.length,
+      tickers: fallbackTickers,
+      fallback: true,
+      warning: error?.message || 'Upstream unavailable, served fallback tickers',
+    });
   }
 }
+

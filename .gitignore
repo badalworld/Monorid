@@ -13,3 +13,7 @@ dev-err*.txt
 dev-out*.txt
 npm-err*.txt
 npm-out*.txt
+.dev-pid.txt
+*.json.dump
+history_orders_dump.json
+all_historical_orders.json

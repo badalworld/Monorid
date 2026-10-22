@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { generateMexcSignature } from '@/lib/mexc';
+import { mexcAuthRequest } from '@/lib/mexc';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const { apiKey, secretKey } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const apiKey = process.env.MEXC_API_KEY || body.apiKey || '';
+    const secretKey = process.env.MEXC_SECRET_KEY || body.secretKey || '';
 
     if (!apiKey || !secretKey) {
       return NextResponse.json(
@@ -14,27 +16,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const timestamp = Date.now();
-    const signature = generateMexcSignature(apiKey, secretKey, timestamp, '');
+    const data = await mexcAuthRequest(apiKey, secretKey, 'GET', '/api/v1/private/account/assets');
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
-
-    const res = await fetch('https://contract.mexc.com/api/v1/private/account/assets', {
-      method: 'GET',
-      signal: controller.signal,
-      headers: {
-        'ApiKey': apiKey,
-        'Request-Time': timestamp.toString(),
-        'Signature': signature,
-        'Content-Type': 'application/json',
-      },
-    });
-    clearTimeout(timeout);
-
-    const data = await res.json().catch(() => null);
-
-    if (res.ok && data && data.success) {
+    if (data && data.success) {
       return NextResponse.json({
         success: true,
         message: 'MEXC API credentials verified successfully! Account assets accessed.',
@@ -43,7 +27,7 @@ export async function POST(req: NextRequest) {
     } else {
       return NextResponse.json({
         success: false,
-        code: data?.code || res.status,
+        code: data?.code || 401,
         message: data?.message || 'Authentication rejected by MEXC API. Please verify IP whitelisting and permissions.',
       });
     }

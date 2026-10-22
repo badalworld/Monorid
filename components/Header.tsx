@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Sliders,
   Play,
@@ -15,7 +15,9 @@ interface HeaderProps {
   isAutoTrading: boolean;
   setIsAutoTrading: React.Dispatch<React.SetStateAction<boolean>>;
   equity: number;
+  availableBalance?: number | null;
   todayPnl: number;
+  todayPnlPct?: number;
   openPositionsCount: number;
   onOpenSettings: () => void;
   onEmergencyFlatten: () => void;
@@ -29,7 +31,9 @@ export function Header({
   isAutoTrading,
   setIsAutoTrading,
   equity,
+  availableBalance,
   todayPnl,
+  todayPnlPct,
   openPositionsCount,
   onOpenSettings,
   onEmergencyFlatten,
@@ -37,13 +41,49 @@ export function Header({
   onOpenGridBreakdown,
 }: HeaderProps) {
   const [copiedIp, setCopiedIp] = useState(false);
-  const pnlDenominator = equity - todayPnl;
-  const pnlPercent = pnlDenominator !== 0 ? (todayPnl / pnlDenominator) * 100 : 0;
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const pnlPercent = todayPnlPct !== undefined ? todayPnlPct : 0;
   const isPnlPositive = todayPnl >= 0;
 
   const handleCopyIp = () => {
     if (serverIp && serverIp !== 'Detecting...') {
-      navigator.clipboard.writeText(serverIp);
+      // Try modern clipboard API first, fallback to execCommand if not focused
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(serverIp).catch(() => {
+          // Fallback for when document is not focused
+          const textArea = document.createElement('textarea');
+          textArea.value = serverIp;
+          textArea.style.position = 'fixed';
+          textArea.style.left = '-999999px';
+          document.body.appendChild(textArea);
+          textArea.select();
+          try {
+            document.execCommand('copy');
+          } catch (err) {
+            console.warn('Copy failed:', err);
+          }
+          document.body.removeChild(textArea);
+        });
+      } else {
+        // Fallback for non-secure contexts
+        const textArea = document.createElement('textarea');
+        textArea.value = serverIp;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.select();
+        try {
+          document.execCommand('copy');
+        } catch (err) {
+          console.warn('Copy failed:', err);
+        }
+        document.body.removeChild(textArea);
+      }
       setCopiedIp(true);
       setTimeout(() => setCopiedIp(false), 2000);
     }
@@ -81,7 +121,7 @@ export function Header({
               <div className="font-mono text-slate-400 text-[10px] tracking-tight mt-0.5 flex items-center flex-wrap gap-1.5">
                 <span className="text-slate-300">Trading Lifestyle Quant</span>
                 <span className="text-slate-600">•</span>
-                <span className="text-cyan-400 font-semibold">MEXC 3M</span>
+                <span className="text-cyan-400 font-semibold">MEXC 1M</span>
                 <span className="text-slate-600">•</span>
                 <span className="flex items-center gap-1 text-slate-300">
                   IP: <span className="font-semibold text-slate-200">{serverIp}</span>
@@ -132,7 +172,7 @@ export function Header({
               Positions
               {openPositionsCount > 0 && (
                 <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-emerald-500 text-[10px] text-slate-950 font-black shadow-[0_0_8px_#10b981]">
-                  {openPositionsCount}/8
+                  {openPositionsCount} Active
                 </span>
               )}
             </button>
@@ -152,20 +192,47 @@ export function Header({
         {/* Dashboard Top Right Management Zone: Equity, P&L, Execution Modes & Switches */}
         <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto justify-between sm:justify-end">
           {/* Equity & Daily P&L widget */}
-          <div className="bg-slate-900/80 border border-slate-800/90 rounded-xl px-3.5 py-1.5 flex items-center gap-4 text-xs font-mono shadow-inner">
+          <div 
+            suppressHydrationWarning
+            className="bg-slate-900/80 border border-slate-800/90 rounded-xl px-3.5 py-1.5 flex items-center gap-4 text-xs font-mono shadow-inner"
+          >
             <div>
               <span className="text-[10px] text-slate-400 block uppercase tracking-wider font-medium">Equity (USDT)</span>
-              <span className="text-white font-black text-sm tracking-wide">
-                ${equity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
+              <div className="flex items-center gap-2">
+                <span 
+                  suppressHydrationWarning
+                  className="text-white font-black text-sm tracking-wide"
+                >
+                  ${mounted ? equity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
+                </span>
+                {mounted && ((availableBalance !== undefined && availableBalance !== null && availableBalance < 0.70) || ((availableBalance === undefined || availableBalance === null) && equity > 0 && equity < 0.70)) && (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] bg-rose-500/20 text-rose-300 border border-rose-500/50 font-bold uppercase tracking-wider">
+                    &lt; $0.70 Blocked
+                  </span>
+                )}
+              </div>
             </div>
             <div className="border-l border-slate-800 pl-3.5">
               <span className="text-[10px] text-slate-400 block uppercase tracking-wider font-medium">Today&apos;s P&L</span>
-              <span className={`font-black text-sm flex items-center gap-1 ${isPnlPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {isPnlPositive ? '+' : ''}${todayPnl.toFixed(2)}
-                <span className="text-[11px] font-semibold">
-                  ({isPnlPositive ? '+' : ''}{pnlPercent.toFixed(2)}%)
-                </span>
+              <span 
+                suppressHydrationWarning
+                className={`font-black text-sm flex items-center gap-1 ${!mounted ? 'text-slate-400' : isPnlPositive ? 'text-emerald-400' : 'text-rose-400'}`}
+              >
+                {mounted ? (
+                  <>
+                    {isPnlPositive ? '+' : ''}${todayPnl.toFixed(2)}
+                    <span className="text-[11px] font-semibold" suppressHydrationWarning>
+                      ({isPnlPositive ? '+' : ''}{pnlPercent.toFixed(2)}%)
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    $0.00
+                    <span className="text-[11px] font-semibold" suppressHydrationWarning>
+                      (0.00%)
+                    </span>
+                  </>
+                )}
               </span>
             </div>
           </div>

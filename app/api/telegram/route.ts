@@ -4,8 +4,10 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { botToken, chatId, test, type, symbol, side, price, sl, tp1, tp2, tp3, leverage, pnl, groupName, closeReason, details } = body;
+    const body = await req.json().catch(() => ({}));
+    const botToken = process.env.TELEGRAM_BOT_TOKEN || body.botToken;
+    const chatId = process.env.TELEGRAM_CHAT_ID || body.chatId;
+    const { test, type, symbol, side, price, sl, tp1, tp2, tp3, leverage, pnl, groupName, details } = body;
 
     if (!botToken || !chatId) {
       return NextResponse.json(
@@ -26,7 +28,10 @@ export async function POST(req: NextRequest) {
         `━━━━━━━━━━━━━━━━━━━━`;
     } else if (type === 'ENTRY') {
       const isLong = side === 'LONG';
-      const icon = isLong ? '🟢 <b>[CRUDE OIL BUY CONFIRMED]</b>' : '🔴 <b>[CRUDE OIL SELL CONFIRMED]</b>';
+      const isSameCandle = details?.candleTiming === 'SAME_CANDLE' || body.candleTiming === 'SAME_CANDLE';
+      const icon = isLong
+        ? `🟢 <b>[MARKET CIPHER B BUY CONFIRMED${isSameCandle ? ' • GREEN DOT' : ''}]</b>`
+        : `🔴 <b>[MARKET CIPHER B SELL CONFIRMED${isSameCandle ? ' • RED DOT' : ''}]</b>`;
       message = `${icon}\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
         `• <b>Bot:</b> Monorid Quant Core\n` +
@@ -34,26 +39,22 @@ export async function POST(req: NextRequest) {
         `• <b>Group:</b> ${groupName || 'Volatiles'}\n` +
         `• <b>Direction:</b> ${side}\n` +
         `• <b>Entry Price:</b> $${price}\n` +
-        `• <b>Leverage:</b> ${leverage || 12}x\n` +
+        `• <b>Leverage:</b> ${leverage || 7}x\n` +
         `• <b>Equity Allocation:</b> 10% Portfolio\n` +
         `• <b>Risk/Reward Targets:</b>\n` +
-        `   🛑 SL: $${sl}\n` +
-        `   🎯 TP1 (25% Close): $${tp1}\n` +
-        `   🎯 TP2 (50% Close): $${tp2}\n` +
-        `   🏆 TP3 (Full Close): $${tp3}\n` +
-        `• <b>Volume Pulse:</b> ${details?.volumeMult || 1.2}x MA (Expansion)\n` +
+        `   🛑 Stop Loss (EMA 200): $${sl}\n` +
+        `   🎯 Take Profit (1:2 Target • 100%): $${tp1}\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
-        `<i>Trading Lifestyle Quant Engine</i>`;
+        `<i>Market Cipher B Quant Engine</i>`;
     } else if (type === 'TP1_HIT') {
-      message = `🎯 <b>[TARGET 1 REACHED - 25% SECURED]</b>\n` +
+      message = `🎯 <b>[TAKE PROFIT REACHED - 1:2 TARGET FULLY SECURED]</b>\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
         `• <b>Contract:</b> ${symbol} (${side})\n` +
         `• <b>Trigger Price:</b> $${price}\n` +
-        `• <b>Position Action:</b> 25% Closed\n` +
+        `• <b>Position Action:</b> 100% Closed (1:2 Target)\n` +
         `• <b>Realized P&L:</b> +$${pnl?.toFixed(2) || '0.00'}\n` +
-        `• <b>Trailing SL:</b> Moved to Break-Even\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
-        `<i>Monorid 24/7 Execution</i>`;
+        `<i>Market Cipher B 24/7 Execution</i>`;
     } else if (type === 'TP2_HIT') {
       message = `🎯 <b>[TARGET 2 REACHED - 50% SECURED]</b>\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest) {
       }),
     });
 
-    const tgData = await tgRes.json();
+    const tgData = await tgRes.json().catch(() => ({}));
 
     if (tgRes.ok && tgData.ok) {
       return NextResponse.json({ success: true, message: 'Telegram alert dispatched successfully.' });

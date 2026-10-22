@@ -295,7 +295,7 @@ export function SettingsModal({
               <div className="flex items-center gap-2">
                 <Shield className="w-4 h-4 text-cyan-400" />
                 <h3 className="text-xs font-mono font-bold text-slate-200 uppercase tracking-wider">
-                  Quant Strategy & Execution Parameters
+                  Market Cipher B Free Strategy & Risk Parameters
                 </h3>
               </div>
               <button
@@ -308,6 +308,87 @@ export function SettingsModal({
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
               <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Channel Length (n1)</label>
+                <input
+                  type="number"
+                  value={config.channelLength ?? 10}
+                  onChange={(e) => setConfig({ ...config, channelLength: Number(e.target.value) || 10 })}
+                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-cyan-300 font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Average Length (n2)</label>
+                <input
+                  type="number"
+                  value={config.averageLength ?? 21}
+                  onChange={(e) => setConfig({ ...config, averageLength: Number(e.target.value) || 21 })}
+                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-white font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Overbought (OB 53)</label>
+                <input
+                  type="number"
+                  value={config.obLevel2 ?? 53}
+                  onChange={(e) => setConfig({ ...config, obLevel2: Number(e.target.value) || 53 })}
+                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-rose-400 font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Oversold (OS -53)</label>
+                <input
+                  type="number"
+                  value={config.osLevel2 ?? -53}
+                  onChange={(e) => setConfig({ ...config, osLevel2: Number(e.target.value) || -53 })}
+                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-emerald-400 font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">EMA Length</label>
+                <input
+                  type="number"
+                  value={config.emaLength ?? 200}
+                  onChange={(e) => setConfig({ ...config, emaLength: Number(e.target.value) || 200 })}
+                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-cyan-300 font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Risk/Reward Target</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={config.riskRewardRatio ?? 2.0}
+                  onChange={(e) => setConfig({ ...config, riskRewardRatio: Number(e.target.value) || 2.0, rrTp1: Number(e.target.value) || 2.0 })}
+                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-emerald-400 font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Min Leverage</label>
+                <input
+                  type="number"
+                  value={config.minLeverage}
+                  onChange={(e) => setConfig({ ...config, minLeverage: Number(e.target.value) || 6 })}
+                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-white font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Max Leverage</label>
+                <input
+                  type="number"
+                  value={config.maxLeverage}
+                  onChange={(e) => setConfig({ ...config, maxLeverage: Number(e.target.value) || 8 })}
+                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-white font-bold"
+                />
+              </div>
+
+              <div>
                 <label className="text-[10px] text-slate-400 block mb-1">Equity % / Trade</label>
                 <input
                   type="number"
@@ -318,80 +399,38 @@ export function SettingsModal({
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Min Leverage</label>
+                <label className="text-[10px] text-slate-400 block mb-1">Min Confidence (%)</label>
                 <input
                   type="number"
-                  value={config.minLeverage}
-                  onChange={(e) => setConfig({ ...config, minLeverage: Number(e.target.value) || 10 })}
-                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-white font-bold"
+                  value={config.minConfidence ?? 80}
+                  onChange={(e) => setConfig({ ...config, minConfidence: Number(e.target.value) || 80 })}
+                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-cyan-300 font-bold"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Max Leverage</label>
+                <label className="text-[10px] text-slate-400 block mb-1">SL Safety Buffer (%)</label>
                 <input
                   type="number"
-                  value={config.maxLeverage}
-                  onChange={(e) => setConfig({ ...config, maxLeverage: Number(e.target.value) || 15 })}
-                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-white font-bold"
+                  step="0.001"
+                  value={config.slBufferPct ?? 0.003}
+                  onChange={(e) => setConfig({ ...config, slBufferPct: Number(e.target.value) || 0.003 })}
+                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-rose-300 font-bold"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">SMA Length</label>
-                <input
-                  type="number"
-                  value={config.smaLength}
-                  onChange={(e) => setConfig({ ...config, smaLength: Number(e.target.value) || 70 })}
-                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-white font-bold"
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] text-slate-400 block mb-1">RSI Length</label>
-                <input
-                  type="number"
-                  value={config.rsiLength}
-                  onChange={(e) => setConfig({ ...config, rsiLength: Number(e.target.value) || 14 })}
-                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-white"
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] text-slate-400 block mb-1">RSI Higher</label>
-                <input
-                  type="number"
-                  value={config.rsiHigher}
-                  onChange={(e) => setConfig({ ...config, rsiHigher: Number(e.target.value) || 80 })}
-                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-white"
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] text-slate-400 block mb-1">RSI Lower</label>
-                <input
-                  type="number"
-                  value={config.rsiLower}
-                  onChange={(e) => setConfig({ ...config, rsiLower: Number(e.target.value) || 20 })}
-                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-white"
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] text-slate-400 block mb-1">EMA Length</label>
-                <input
-                  type="number"
-                  value={config.emaLength}
-                  onChange={(e) => setConfig({ ...config, emaLength: Number(e.target.value) || 200 })}
-                  className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-white"
-                />
+                <label className="text-[10px] text-slate-400 block mb-1">Execution Rule</label>
+                <div className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-emerald-400 font-bold text-[11px] truncate">
+                  STRICT CIPHER B ONLY
+                </div>
               </div>
             </div>
 
             <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-xs font-mono text-slate-400">
-              <span>Risk/Reward Targets:</span>
+              <span>Strategy Engine:</span>
               <span className="text-cyan-300 font-bold">
-                TP1: {config.rrTp1}x (25% close) • TP2: {config.rrTp2}x (50% close) • TP3: {config.rrTp3}x (100% close)
+                Market Cipher B Free (10, 21, OB 53, OS -53) • EMA 200 Trend Filter • 1:2 R:R (100% Exit)
               </span>
             </div>
           </div>

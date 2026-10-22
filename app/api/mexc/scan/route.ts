@@ -1,8 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchMexcKlines, fetchMexcFuturesTickers } from '@/lib/mexc';
-import { analyzeCrudeOilStrategy, aggregateCandles, DEFAULT_CONFIG, StrategyConfig } from '@/lib/strategy';
+import { analyzeMarketCipherBStrategy, DEFAULT_CONFIG, StrategyConfig } from '@/lib/strategy';
 
 export const dynamic = 'force-dynamic';
+
+async function runWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let currentIndex = 0;
+
+  async function worker() {
+    while (currentIndex < items.length) {
+      const idx = currentIndex++;
+      try {
+        results[idx] = await fn(items[idx]);
+      } catch (err: any) {
+        results[idx] = {
+          symbol: items[idx] as any,
+          success: false,
+          error: err?.message || 'Processing error',
+        } as any;
+      }
+    }
+  }
+
+  const workerCount = Math.min(concurrency, items.length);
+  const workers = Array.from({ length: workerCount }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,39 +42,35 @@ export async function POST(req: NextRequest) {
     let targetSymbols = symbols;
     if (!targetSymbols || targetSymbols.length === 0) {
       const tickers = await fetchMexcFuturesTickers();
-      targetSymbols = tickers.slice(0, 15).map((t) => t.symbol);
+      targetSymbols = tickers.map((t) => t.symbol);
     }
 
-    const batch = targetSymbols.slice(0, 8);
-
-    const scanResults: any[] = [];
-    for (const symbol of batch) {
+    // Process all targeted contracts with managed concurrency (8 in-flight) to prevent MEXC 429s
+    const scanResults = await runWithConcurrency(targetSymbols, 8, async (symbol) => {
       try {
-        const klines1m = await fetchMexcKlines(symbol, 630, 'Min1');
-        if (klines1m.length < 60) {
-          scanResults.push({
+        const klines = await fetchMexcKlines(symbol, 280, 'Min1');
+        if (klines.length < 60) {
+          return {
             symbol,
             success: false,
-            error: `Insufficient candle data for ${symbol} (${klines1m.length} bars)`,
-          });
-          continue;
+            error: `Insufficient candle data for ${symbol} (${klines.length} bars)`,
+          };
         }
-        const klines = aggregateCandles(klines1m, 3);
-        const analysis = analyzeCrudeOilStrategy(klines, config);
-        scanResults.push({
+        const analysis = analyzeMarketCipherBStrategy(klines, config);
+        return {
           symbol,
           success: true,
           analysis,
-          candles: klines.slice(-30),
-        });
+          candles: targetSymbols.length <= 5 ? klines.slice(-220) : klines.slice(-30),
+        };
       } catch (err: any) {
-        scanResults.push({
+        return {
           symbol,
           success: false,
           error: err?.message || 'Scan error',
-        });
+        };
       }
-    }
+    });
 
     return NextResponse.json({
       success: true,

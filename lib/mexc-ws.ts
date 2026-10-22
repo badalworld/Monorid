@@ -38,6 +38,9 @@ class MexcWebSocketManager {
         symbol: upperSymbol,
         callbacks: new Set(),
       });
+      // If already connected, send subscription immediately (resubscribe only
+      // fires on reconnect, so new symbols would otherwise never be sent)
+      this.sendSymbolSubscription(upperSymbol);
     }
 
     this.subscriptions.get(upperSymbol)!.callbacks.add(callback);
@@ -89,6 +92,7 @@ class MexcWebSocketManager {
       this.ws.onopen = () => {
         console.log('[MEXC WS] Connected');
         this.isConnecting = false;
+        // Reset backoff only after a successful connection
         this.reconnectDelay = 1000;
         this.resubscribe();
         this.startPing();
@@ -124,12 +128,12 @@ class MexcWebSocketManager {
    * Handle incoming WebSocket messages
    */
   private handleMessage(msg: any) {
-    // MEXC sends different message types
-    // Mark price: { channel: 'push.market.mark.price', symbol: 'BTC_USDT', data: { p: 91420 } }
-    // Trade: { channel: 'push.market.deal', symbol: 'BTC_USDT', data: { p: 91420 } }
+    // MEXC push message formats:
+    // Ticker: { channel: 'push.ticker', symbol: 'BTC_USDT', data: { lastPrice: 91420, ... } }
+    // Deal:   { channel: 'push.deal',   symbol: 'BTC_USDT', data: { p: 91420 } }
 
     const symbol = msg.symbol;
-    const price = msg.data?.p || msg.data?.price;
+    const price = msg.data?.lastPrice || msg.data?.p || msg.data?.price;
 
     if (symbol && price) {
       const upperSymbol = symbol.toUpperCase();
@@ -154,23 +158,32 @@ class MexcWebSocketManager {
   }
 
   /**
+   * Send subscriptions for a single symbol on the current socket
+   */
+  private sendSymbolSubscription(symbol: string) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+    // Ticker pushes ~1s snapshots (works for all symbols, even illiquid ones)
+    this.send({
+      method: 'sub.ticker',
+      param: { symbol },
+    });
+
+    // Deal pushes fire on individual trades (granular, but rare for illiquid symbols)
+    this.send({
+      method: 'sub.deal',
+      param: { symbol },
+    });
+  }
+
+  /**
    * Resubscribe to all active symbols
    */
   private resubscribe() {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
     this.subscriptions.forEach((sub) => {
-      // Subscribe to mark price stream
-      this.send({
-        method: 'sub.deal',
-        param: { symbol: sub.symbol },
-      });
-
-      // Also subscribe to mark price for SL/TP triggers
-      this.send({
-        method: 'sub.mark.price',
-        param: { symbol: sub.symbol },
-      });
+      this.sendSymbolSubscription(sub.symbol);
     });
   }
 
@@ -204,19 +217,23 @@ class MexcWebSocketManager {
   }
 
   /**
-   * Schedule reconnection with exponential backoff
+   * Schedule reconnection with exponential backoff.
+   * Backoff is incremented AFTER the delay fires (not before connect),
+   * so a fast successful reconnect always resets to 1000ms via onopen.
    */
   private scheduleReconnect() {
     if (this.reconnectTimer) return;
+
+    const delay = this.reconnectDelay;
+    // Increase backoff for the NEXT attempt before scheduling this one
+    this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.subscriptions.size > 0) {
         this.connect();
-        // Exponential backoff
-        this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
       }
-    }, this.reconnectDelay);
+    }, delay);
   }
 
   /**

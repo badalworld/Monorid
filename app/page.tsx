@@ -19,15 +19,35 @@ import {
   ASSET_GROUPS,
   OFFICIAL_BOT_UNITS,
   MAX_OPEN_POSITIONS,
+  getStaticFallbackTickers,
+  extractOrderFeeAndFunding,
+  deduplicateClosedPositions,
+  reconstructStrategyTargets,
+  MIN_AVAILABLE_BALANCE_USDT,
 } from '@/lib/mexc';
 import { mexcWs } from '@/lib/mexc-ws';
 import { StrategyConfig, DEFAULT_CONFIG, SignalResult, Candle } from '@/lib/strategy';
 
+function formatPrice(p: number | undefined): string {
+  if (p === undefined || isNaN(p) || p === 0) return '0.00';
+  if (Math.abs(p) < 0.0001) return p.toFixed(8);
+  if (Math.abs(p) < 0.01) return p.toFixed(6);
+  if (Math.abs(p) < 1) return p.toFixed(4);
+  return p.toFixed(2);
+}
+
 export default function Home() {
+  const [mounted, setMounted] = useState<boolean>(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   // Navigation & State
   const [activeTab, setActiveTab] = useState<'dashboard' | 'scanner' | 'positions' | 'logs' | 'settings'>('dashboard');
   const [isAutoTrading, setIsAutoTrading] = useState<boolean>(true);
   const [equity, setEquity] = useState<number>(0);
+  const [availableBalance, setAvailableBalance] = useState<number | null>(null);
+  const [startingBalance, setStartingBalance] = useState<number | null>(null);
   const [serverIp, setServerIp] = useState<string>('Detecting...');
 
   // Settings
@@ -49,6 +69,78 @@ export default function Home() {
   const [isScanningBatch, setIsScanningBatch] = useState<boolean>(false);
   const executingSymbolsRef = useRef<Set<string>>(new Set());
   const lastAttemptRef = useRef<Map<string, number>>(new Map());
+  const executedTpsRef = useRef<Set<string>>(new Set());
+  const [pnlHistory, setPnlHistory] = useState<number[]>([]);
+  const [lossCooldowns, setLossCooldowns] = useState<Map<string, number>>(new Map());
+  const lossCooldownsRef = useRef<Map<string, number>>(lossCooldowns);
+
+  // Restore client-side persisted state after initial hydration pass (guarantees 100% SSR match)
+  useEffect(() => {
+    try {
+      const savedPos = localStorage.getItem('monorid_positions');
+      if (savedPos) {
+        const parsed = JSON.parse(savedPos);
+        if (Array.isArray(parsed)) {
+          const deduplicated = deduplicateClosedPositions(parsed);
+          setPositions(deduplicated);
+          positionsRef.current = deduplicated;
+        }
+      }
+      const savedLogs = localStorage.getItem('monorid_logs');
+      if (savedLogs) setLogs(JSON.parse(savedLogs));
+
+      const savedPnl = localStorage.getItem('monorid_pnl_history');
+      if (savedPnl) setPnlHistory(JSON.parse(savedPnl));
+
+      const savedCooldowns = localStorage.getItem('monorid_loss_cooldowns');
+      if (savedCooldowns) {
+        const obj = JSON.parse(savedCooldowns);
+        const map = new Map<string, number>();
+        const now = Date.now();
+        for (const [k, v] of Object.entries(obj)) {
+          if (typeof v === 'number' && v > now) map.set(k, v);
+        }
+        setLossCooldowns(map);
+        lossCooldownsRef.current = map;
+      }
+    } catch (err) {
+      console.warn('Failed to hydrate state from localStorage:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    lossCooldownsRef.current = lossCooldowns;
+    try {
+      const obj: Record<string, number> = {};
+      for (const [k, v] of lossCooldowns.entries()) {
+        if (v > Date.now()) obj[k] = v;
+      }
+      localStorage.setItem('monorid_loss_cooldowns', JSON.stringify(obj));
+    } catch (err) {
+      console.warn('Failed to persist loss cooldowns:', err);
+    }
+  }, [lossCooldowns, mounted]);
+
+  // Track repeated losses within 4 hours to escalate cooldown duration
+  const lossCountsRef = useRef<Map<string, { count: number; lastLoss: number }>>(new Map());
+
+  // Helper to trigger a 30-minute cooldown on a symbol after a Stop Loss (90m on 2nd+ repeat loss)
+  const triggerLossCooldown = useCallback((symbol: string, reason: string = 'Stop Loss Hit') => {
+    const now = Date.now();
+    const existing = lossCountsRef.current.get(symbol);
+    const count = existing && now - existing.lastLoss < 4 * 3600 * 1000 ? existing.count + 1 : 1;
+    lossCountsRef.current.set(symbol, { count, lastLoss: now });
+
+    const cooldownMs = count > 1 ? 90 * 60 * 1000 : 30 * 60 * 1000;
+    const expiresAt = now + cooldownMs;
+    setLossCooldowns((prev) => {
+      const next = new Map(prev);
+      next.set(symbol, expiresAt);
+      return next;
+    });
+    console.log(`[Cooldown Activated] ${symbol} cooling down for ${cooldownMs / 60000}m (Loss #${count}: ${reason}). Entries banned until ${new Date(expiresAt).toLocaleTimeString()}`);
+  }, []);
 
   // Chart Modal
   const [chartSymbol, setChartSymbol] = useState<string>('BTC_USDT');
@@ -99,12 +191,30 @@ export default function Home() {
       const savedTelegramToken = localStorage.getItem('monorid-telegram-token');
       const savedTelegramChatId = localStorage.getItem('monorid-telegram-chat');
       const savedConfig = localStorage.getItem('monorid-config');
-      if (savedApiKey) setApiKey(savedApiKey);
-      if (savedSecretKey) setSecretKey(savedSecretKey);
+      // Only restore if non-empty (reject empty strings)
+      if (savedApiKey && savedApiKey.trim()) setApiKey(savedApiKey);
+      if (savedSecretKey && savedSecretKey.trim()) setSecretKey(savedSecretKey);
       if (savedTelegramToken) setTelegramToken(savedTelegramToken);
       if (savedTelegramChatId) setTelegramChatId(savedTelegramChatId);
       if (savedConfig) {
-        setConfig({ ...DEFAULT_CONFIG, ...JSON.parse(savedConfig) });
+        try {
+          const parsed = JSON.parse(savedConfig);
+          // Auto-migrate legacy strategy parameters to Market Cipher B defaults
+          if (!parsed.channelLength) parsed.channelLength = DEFAULT_CONFIG.channelLength;
+          if (!parsed.averageLength) parsed.averageLength = DEFAULT_CONFIG.averageLength;
+          if (parsed.obLevel2 === undefined) parsed.obLevel2 = DEFAULT_CONFIG.obLevel2;
+          if (parsed.osLevel2 === undefined) parsed.osLevel2 = DEFAULT_CONFIG.osLevel2;
+          if (!parsed.emaLength) parsed.emaLength = DEFAULT_CONFIG.emaLength;
+          if (!parsed.riskRewardRatio) parsed.riskRewardRatio = DEFAULT_CONFIG.riskRewardRatio;
+          if (!parsed.rrTp1) parsed.rrTp1 = DEFAULT_CONFIG.rrTp1;
+          if (parsed.minConfidence === undefined || parsed.minConfidence < 80) parsed.minConfidence = DEFAULT_CONFIG.minConfidence;
+          if (parsed.maxLeverage && parsed.maxLeverage > 8) parsed.maxLeverage = 8;
+          const merged = { ...DEFAULT_CONFIG, ...parsed };
+          setConfig(merged);
+          localStorage.setItem('monorid-config', JSON.stringify(merged));
+        } catch {
+          setConfig(DEFAULT_CONFIG);
+        }
       }
     } catch {
       // localStorage unavailable
@@ -144,6 +254,34 @@ export default function Home() {
     loadServerIp();
   }, []);
 
+  // Load starting balance from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem('monorid_starting_balance');
+    if (saved) {
+      setStartingBalance(parseFloat(saved));
+    }
+  }, []);
+
+  // Persist positions to localStorage whenever they change
+  useEffect(() => {
+    if (!mounted) return;
+    try {
+      localStorage.setItem('monorid_positions', JSON.stringify(positions));
+    } catch (err) {
+      console.warn('Failed to save positions to localStorage:', err);
+    }
+  }, [positions, mounted]);
+
+  // Persist logs to localStorage whenever they change
+  useEffect(() => {
+    if (!mounted) return;
+    try {
+      localStorage.setItem('monorid_logs', JSON.stringify(logs));
+    } catch (err) {
+      console.warn('Failed to save logs to localStorage:', err);
+    }
+  }, [logs, mounted]);
+
   // 1b. Fetch real MEXC account balance (equity) when API credentials are available
   useEffect(() => {
     let cancelled = false;
@@ -158,9 +296,17 @@ export default function Home() {
         });
         const data = await res.json().catch(() => null);
         if (!cancelled && data && data.success && data.balance) {
+          const avail = Number(data.balance.availableBalance) || 0;
+          setAvailableBalance(avail);
           const totalEquity = (data.balance.totalEquity || 0) + (data.balance.unrealisedProfit || 0);
           if (totalEquity > 0) {
             setEquity(totalEquity);
+            // Set starting balance only if not already persisted in localStorage
+            const savedBalance = localStorage.getItem('monorid_starting_balance');
+            if (!savedBalance) {
+              setStartingBalance(totalEquity);
+              localStorage.setItem('monorid_starting_balance', totalEquity.toString());
+            }
           }
         }
       } catch (err) {
@@ -176,130 +322,10 @@ export default function Home() {
     };
   }, [apiKey, secretKey]);
 
-  // 2. Fetch Tickers and Initialize Market Data
-  const loadTickers = useCallback(async () => {
-    try {
-      const res = await fetch('/api/mexc/tickers');
-      if (res.ok) {
-        const data = await res.json();
-        if (data && Array.isArray(data.tickers) && data.tickers.length > 0) {
-          tickersRef.current = data.tickers;
-          setTickers(data.tickers);
-          return data.tickers;
-        }
-      }
-      console.error('[MEXC] Ticker fetch returned empty — market data unavailable');
-    } catch (err) {
-      console.error('[MEXC] Ticker fetch failed — market data unavailable:', err);
-    }
-    return [];
-  }, []);
-
-  // 3. Scan top volatile symbols for CRUDE OIL BUY/SELL signals with EMA 200 filter
-  const runScanner = useCallback(async (currentTickers?: MexcTicker[]) => {
-    setIsScanningBatch(true);
-    const targetTickers = currentTickers || tickersRef.current;
-    if (targetTickers.length === 0) {
-      setIsScanningBatch(false);
-      return;
-    }
-
-    // Pick top 15 highest volatile contracts
-    const topSymbols = targetTickers.slice(0, 15).map((t) => t.symbol);
-
-    try {
-      const res = await fetch('/api/mexc/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbols: topSymbols, config }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data && Array.isArray(data.results)) {
-          const newResults: Record<string, SignalResult> = {};
-          const newSignals: ActiveSignalItem[] = [];
-
-          for (const item of data.results) {
-            if (item.success && item.analysis) {
-              newResults[item.symbol] = item.analysis;
-              const t = targetTickers.find((tick) => tick.symbol === item.symbol);
-              const groupName = t?.groupName || 'Apex Cyber-Volatiles';
-
-              if (item.analysis.action === 'BUY' || item.analysis.action === 'SELL') {
-                newSignals.push({
-                  id: `sig-${item.symbol}-${Date.now()}`,
-                  symbol: item.symbol,
-                  groupName,
-                  side: item.analysis.action,
-                  price: item.analysis.entryPrice || t?.lastPrice || 100,
-                  confidence: Math.min(96, Math.round(85 + (item.analysis.emaFilterOK ? 10 : 0))),
-                  leverage: item.analysis.recommendedLeverage || 12,
-                  sl: item.analysis.slLevel || (item.analysis.entryPrice || 100) * 0.985,
-                  tp1: item.analysis.tp1Level || (item.analysis.entryPrice || 100) * 1.015,
-                  tp2: item.analysis.tp2Level || (item.analysis.entryPrice || 100) * 1.03,
-                  tp3: item.analysis.tp3Level || (item.analysis.entryPrice || 100) * 1.045,
-                  rsi: item.analysis.rsi || 50,
-                  emaFilterOK: item.analysis.emaFilterOK || false,
-                  timestamp: Date.now(),
-                  status: 'ACTIVE',
-                  retryCount: 0,
-                  analysis: item.analysis,
-                });
-              }
-            }
-          }
-
-          setScanResults((prev) => ({ ...prev, ...newResults }));
-
-          setActiveSignals((prevSignals) => {
-            const merged = new Map<string, ActiveSignalItem>();
-            for (const sig of prevSignals) {
-              if (sig.status === 'ACTIVE') merged.set(sig.symbol, sig);
-            }
-            for (const sig of newSignals) {
-              const existing = merged.get(sig.symbol);
-              if (existing) {
-                merged.set(sig.symbol, {
-                  ...sig,
-                  retryCount: existing.retryCount,
-                  id: existing.id,
-                  timestamp: existing.timestamp,
-                });
-              } else {
-                merged.set(sig.symbol, sig);
-              }
-            }
-            for (const [symbol, sig] of merged) {
-              const freshAnalysis = newResults[symbol];
-              if (freshAnalysis && freshAnalysis.action !== 'BUY' && freshAnalysis.action !== 'SELL') {
-                merged.delete(symbol);
-              }
-            }
-            return Array.from(merged.values());
-          });
-        }
-      }
-    } catch (err) {
-      console.warn('Scanner error:', err);
-    } finally {
-      setIsScanningBatch(false);
-    }
-  }, [config]);
-
-  // Initial load
+  // Log equity state for debugging
   useEffect(() => {
-    let isMounted = true;
-    const initialize = async () => {
-      const t = await loadTickers();
-      if (!isMounted) return;
-      runScanner(t);
-    };
-    initialize();
-    return () => {
-      isMounted = false;
-    };
-  }, [loadTickers, runScanner]);
+    console.log('[Equity] Current balance:', equity, 'API keys set:', !!apiKey && !!secretKey);
+  }, [equity, apiKey, secretKey]);
 
   // Helper to add trade logs
   const addLog = useCallback((entry: Omit<TradeLog, 'id' | 'timestamp'>) => {
@@ -308,14 +334,326 @@ export default function Home() {
       id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       timestamp: Date.now(),
     };
-    setLogs((prev) => [newLog, ...prev.slice(0, 99)]);
+    setLogs((prev) => [newLog, ...prev.slice(0, 499)]);
   }, []);
 
+  // Track logged opportunities & eliminated reasons to prevent log spamming every 30s
+  const loggedOpportunitiesRef = useRef<Set<string>>(new Set());
+  const loggedEliminatedRef = useRef<Set<string>>(new Set());
+  const isAutoTradingInitialRef = useRef<boolean>(true);
+
+  // Comprehensive Event Logging: Monorid Running and Monorid Stop lifecycle
+  useEffect(() => {
+    if (!mounted) return;
+    if (isAutoTradingInitialRef.current) {
+      isAutoTradingInitialRef.current = false;
+      addLog({
+        groupName: 'SYSTEM',
+        symbol: 'AUTOTRADE',
+        type: isAutoTrading ? 'MONORID_RUNNING' : 'MONORID_STOP',
+        side: 'INFO',
+        price: 0,
+        message: isAutoTrading
+          ? 'Monorid Running: Autonomous 24/7 trading engine activated. Scanning and execution cycles engaged.'
+          : 'Monorid Stop: Autonomous trading engine is currently paused.',
+      });
+      return;
+    }
+
+    if (isAutoTrading) {
+      addLog({
+        groupName: 'SYSTEM',
+        symbol: 'AUTOTRADE',
+        type: 'MONORID_RUNNING',
+        side: 'INFO',
+        price: 0,
+        message: 'Monorid Running: Autonomous trading engine started by operator. 24/7 scanning and order execution active.',
+      });
+    } else {
+      addLog({
+        groupName: 'SYSTEM',
+        symbol: 'AUTOTRADE',
+        type: 'MONORID_STOP',
+        side: 'INFO',
+        price: 0,
+        message: 'Monorid Stop: Autonomous trading engine paused by operator. Live position tracking remains active.',
+      });
+    }
+  }, [isAutoTrading, mounted, addLog]);
+
+  // 2. Fetch Tickers and Initialize Market Data
+  const loadTickers = useCallback(async () => {
+    try {
+      const res = await fetch('/api/mexc/tickers');
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data && Array.isArray(data.tickers) && data.tickers.length > 0) {
+          tickersRef.current = data.tickers;
+          setTickers(data.tickers);
+          return data.tickers;
+        }
+      }
+
+      // Fallback 1: Preserve existing tickers if available
+      if (tickersRef.current && tickersRef.current.length > 0) {
+        console.warn(`[MEXC] Ticker fetch returned empty/status ${res?.status || 'unknown'}, preserving ${tickersRef.current.length} existing tickers`);
+        return tickersRef.current;
+      }
+
+      // Fallback 2: Bootstrap static fallback tickers so market data is ALWAYS available
+      console.warn('[MEXC] Ticker fetch empty and no cache exists. Initializing static fallback tickers.');
+      const fallback = getStaticFallbackTickers();
+      tickersRef.current = fallback;
+      setTickers(fallback);
+      return fallback;
+    } catch (err) {
+      if (tickersRef.current && tickersRef.current.length > 0) {
+        console.warn(`[MEXC] Ticker fetch threw error, preserving ${tickersRef.current.length} existing tickers:`, err);
+        return tickersRef.current;
+      }
+      console.warn('[MEXC] Ticker fetch failed and no cache exists. Initializing static fallback tickers:', err);
+      const fallback = getStaticFallbackTickers();
+      tickersRef.current = fallback;
+      setTickers(fallback);
+      return fallback;
+    }
+  }, []);
+
+  // 3. Scan top volatile symbols for Market Cipher B signals (Green Dot > EMA 200 / Red Dot < EMA 200)
+  const runScanner = useCallback(async (currentTickers?: MexcTicker[]) => {
+    setIsScanningBatch(true);
+    
+    // Always refresh ticker list if none passed, or use active/fallback tickers
+    let targetTickers: MexcTicker[] = (currentTickers && currentTickers.length > 0) ? currentTickers : [];
+    if (targetTickers.length === 0) {
+      const freshTickers = await loadTickers();
+      if (freshTickers && freshTickers.length > 0) {
+        targetTickers = freshTickers;
+      } else if (tickersRef.current && tickersRef.current.length > 0) {
+        targetTickers = tickersRef.current;
+      } else {
+        targetTickers = getStaticFallbackTickers();
+        tickersRef.current = targetTickers;
+        setTickers(targetTickers);
+      }
+    }
+    
+    if (targetTickers.length === 0) {
+      console.warn('[Scanner] No tickers available - cannot scan');
+      setIsScanningBatch(false);
+      return;
+    }
+
+
+    // Scan ALL active contracts across all groups (chunked by group for real-time progress logging)
+    const allSymbols = targetTickers.map((t) => t.symbol);
+    console.log(`[Scanner] Scanning ${allSymbols.length} contracts across all ${ASSET_GROUPS.length} groups`);
+
+    // Comprehensive Event Logging: Market scan cycle initiated
+    addLog({
+      groupName: 'ALL GROUPS',
+      symbol: 'MARKET_SCAN',
+      type: 'MARKET_SCAN',
+      side: 'INFO',
+      price: 0,
+      message: `Market scan cycle initiated: scanning ${allSymbols.length} contracts across ${ASSET_GROUPS.length} groups on 1M timeframe.`,
+    });
+
+    try {
+      // Partition target tickers by group to provide real-time progress logging
+      const groupMap = new Map<string, MexcTicker[]>();
+      for (const t of targetTickers) {
+        const g = t.groupName || 'Apex Cyber-Volatiles';
+        if (!groupMap.has(g)) groupMap.set(g, []);
+        groupMap.get(g)!.push(t);
+      }
+
+      const allAccumulatedResults: Record<string, SignalResult> = {};
+      const allAccumulatedSignals: ActiveSignalItem[] = [];
+      let totalEliminated = 0;
+      let scannedSoFar = 0;
+
+      const groupEntries = Array.from(groupMap.entries());
+
+      for (let gIdx = 0; gIdx < groupEntries.length; gIdx++) {
+        const [groupName, groupTickers] = groupEntries[gIdx];
+        const groupSymbols = groupTickers.map((t) => t.symbol);
+
+        try {
+          const res = await fetch('/api/mexc/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbols: groupSymbols, config }),
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            if (data && Array.isArray(data.results)) {
+              let groupOpportunitiesCount = 0;
+              for (const item of data.results) {
+                if (item.success && item.analysis) {
+                  allAccumulatedResults[item.symbol] = item.analysis;
+                  const t = groupTickers.find((tick) => tick.symbol === item.symbol);
+
+                  if (item.analysis.action === 'BUY' || item.analysis.action === 'SELL') {
+                    groupOpportunitiesCount++;
+                    const tpTarget = item.analysis.tpLevel ?? item.analysis.tp1Level ?? (item.analysis.action === 'BUY' ? (item.analysis.entryPrice || 100) * 1.03 : (item.analysis.entryPrice || 100) * 0.97);
+                    const slTarget = item.analysis.slLevel ?? (item.analysis.action === 'BUY' ? (item.analysis.entryPrice || 100) * 0.985 : (item.analysis.entryPrice || 100) * 1.015);
+
+                    allAccumulatedSignals.push({
+                      id: `sig-${item.symbol}-${Date.now()}`,
+                      symbol: item.symbol,
+                      groupName,
+                      side: item.analysis.action,
+                      price: item.analysis.entryPrice || t?.lastPrice || 100,
+                      confidence: item.analysis.confidence ?? 0,
+                      leverage: item.analysis.recommendedLeverage || 7,
+                      sl: slTarget,
+                      tp1: tpTarget,
+                      tp2: tpTarget,
+                      tp3: tpTarget,
+                      rsi: item.analysis.rsi || 50,
+                      timestamp: Date.now(),
+                      status: 'ACTIVE',
+                      retryCount: 0,
+                      analysis: item.analysis,
+                    });
+
+                    // Comprehensive Event Logging: New Opportunity Detected
+                    const oppKey = `${item.symbol}-${item.analysis.action}-${Math.floor(Date.now() / 60000)}`;
+                    if (!loggedOpportunitiesRef.current.has(oppKey)) {
+                      loggedOpportunitiesRef.current.add(oppKey);
+                      addLog({
+                        groupName,
+                        symbol: item.symbol,
+                        type: 'NEW_OPPORTUNITY',
+                        side: item.analysis.action === 'BUY' ? 'LONG' : 'SHORT',
+                        price: item.analysis.entryPrice || t?.lastPrice || 0,
+                        message: `New Opportunity: ${item.symbol} (${item.analysis.action === 'BUY' ? 'LONG' : 'SHORT'}) | Entry: $${formatPrice(item.analysis.entryPrice || 0)} | EMA 200: $${formatPrice(item.analysis.ema)} | WT1: ${item.analysis.wt1.toFixed(1)} | WT2: ${item.analysis.wt2.toFixed(1)} (${item.analysis.cipherDot} Dot) | SL: $${formatPrice(slTarget)} (EMA 200) | 1:2 TP: $${formatPrice(tpTarget)} | Conviction: ${item.analysis.confidence}%.`,
+                      });
+                    }
+                  } else if (item.analysis.eliminatedReason) {
+                    totalEliminated++;
+                    // Comprehensive Event Logging: Eliminated Opportunity (filtered by technical rule)
+                    const elimKey = `${item.symbol}-${item.analysis.eliminatedReason.substring(0, 25)}-${Math.floor(Date.now() / 120000)}`;
+                    if (!loggedEliminatedRef.current.has(elimKey)) {
+                      loggedEliminatedRef.current.add(elimKey);
+                      addLog({
+                        groupName,
+                        symbol: item.symbol,
+                        type: 'ELIMINATED_OPPORTUNITY',
+                        side: 'INFO',
+                        price: item.analysis.entryPrice || t?.lastPrice || 0,
+                        message: `Eliminated Opportunity: ${item.symbol} rejected — ${item.analysis.eliminatedReason}.`,
+                      });
+                    }
+                  }
+                }
+              }
+
+              scannedSoFar += groupSymbols.length;
+
+              // Comprehensive Event Logging: Market scan progress update
+              addLog({
+                groupName,
+                symbol: 'MARKET_SCAN',
+                type: 'MARKET_SCAN',
+                side: 'INFO',
+                price: 0,
+                message: `Market scan progress: Group ${gIdx + 1}/${groupEntries.length} (${groupName}) completed — ${scannedSoFar}/${allSymbols.length} contracts scanned (${groupOpportunitiesCount} opportunities found).`,
+              });
+
+              // Progressive state update so UI updates immediately as each group completes
+              setScanResults((prev) => ({ ...prev, ...allAccumulatedResults }));
+            }
+          }
+        } catch (groupErr) {
+          console.warn(`[Scanner] Group scan failed for ${groupName}:`, groupErr);
+        }
+      }
+
+      // Comprehensive Event Logging: Market scan cycle completed
+      addLog({
+        groupName: 'ALL GROUPS',
+        symbol: 'MARKET_SCAN',
+        type: 'MARKET_SCAN',
+        side: 'INFO',
+        price: 0,
+        message: `Market scan cycle completed: ${allSymbols.length} contracts analyzed across ${groupEntries.length} groups. ${allAccumulatedSignals.length} opportunities detected, ${totalEliminated} eliminated.`,
+      });
+
+      console.log('[Scanner] Found', allAccumulatedSignals.length, 'BUY/SELL signals from', Object.keys(allAccumulatedResults).length, 'scanned contracts');
+      if (allAccumulatedSignals.length > 0) {
+        console.log('[Scanner] Signals:', allAccumulatedSignals.map(s => `${s.symbol}:${s.side}`).join(', '));
+      }
+
+      setActiveSignals((prevSignals) => {
+        const merged = new Map<string, ActiveSignalItem>();
+        for (const sig of prevSignals) {
+          if (sig.status === 'ACTIVE') merged.set(sig.symbol, sig);
+        }
+        for (const sig of allAccumulatedSignals) {
+          const existing = merged.get(sig.symbol);
+          if (existing) {
+            merged.set(sig.symbol, {
+              ...sig,
+              retryCount: existing.retryCount,
+              id: existing.id,
+              timestamp: existing.timestamp,
+            });
+          } else {
+            merged.set(sig.symbol, sig);
+          }
+        }
+        const now = Date.now();
+        for (const [symbol, sig] of merged) {
+          const freshAnalysis = allAccumulatedResults[symbol];
+          if (
+            (freshAnalysis && freshAnalysis.action !== 'BUY' && freshAnalysis.action !== 'SELL') ||
+            now - sig.timestamp > 60 * 1000
+          ) {
+            merged.delete(symbol);
+          }
+        }
+        return Array.from(merged.values());
+      });
+    } catch (err) {
+      console.error('[Scanner] Batch scan exception:', err);
+    } finally {
+      setIsScanningBatch(false);
+    }
+  }, [config, addLog, loadTickers]);
+
+  // Initial load
+  useEffect(() => {
+    let isMounted = true;
+    const initialize = async () => {
+      let t = await loadTickers();
+      // If initial load returned empty (e.g. server startup / cold compilation), retry once after a short delay
+      if ((!t || t.length === 0) && isMounted) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        if (!isMounted) return;
+        t = await loadTickers();
+      }
+      if (!isMounted) return;
+      if (t && t.length > 0) {
+        runScanner(t);
+      }
+    };
+    initialize();
+    return () => {
+      isMounted = false;
+    };
+  }, [loadTickers, runScanner]);
+
+
+
+
   // Helper to trigger Telegram Alert
-  const sendTelegramAlert = useCallback(async (type: string, pos: MexcPosition, price: number, pnl?: number) => {
+  const sendTelegramAlert = useCallback(async (type: string, pos: MexcPosition, price: number, pnl?: number, candleTiming?: string) => {
     if (!telegramToken || !telegramChatId) return;
     try {
-      await fetch('/api/telegram', {
+      const res = await fetch('/api/telegram', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -332,10 +670,15 @@ export default function Home() {
           leverage: pos.leverage,
           pnl,
           groupName: pos.groupName,
+          candleTiming,
         }),
       });
-    } catch {
-      // ignore network errors in background
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        console.warn(`[Telegram Alert Failed for ${pos.symbol}]:`, data?.error || res.statusText);
+      }
+    } catch (err) {
+      console.warn(`[Telegram Alert Network Error for ${pos.symbol}]:`, err);
     }
   }, [telegramToken, telegramChatId]);
 
@@ -384,7 +727,8 @@ export default function Home() {
     takeProfitPrice?: number,
     stopLossPrice?: number,
     vol: number = 1,
-    openType: 1 | 2 = 1
+    openType: 1 | 2 = 1,
+    tpVol?: number
   ) => {
     try {
       const res = await fetch('/api/mexc/order', {
@@ -398,6 +742,7 @@ export default function Home() {
           stopLossPrice,
           vol,
           openType,
+          tpVol,
           apiKey,
           secretKey,
         }),
@@ -475,95 +820,82 @@ export default function Home() {
 
             let updatedPos = { ...p, currentPrice: newPrice, unrealizedPnl: unPnl, unrealizedPnlPct: pnlPct };
 
-            if (!p.tp1Hit && (isLong ? newPrice >= p.tp1Price : newPrice <= p.tp1Price)) {
+            const movePct = isLong
+              ? (newPrice - p.entryPrice) / p.entryPrice
+              : (p.entryPrice - newPrice) / p.entryPrice;
+
+            const reachedTp = isLong
+              ? (p.tp1Price > p.entryPrice && newPrice >= p.tp1Price && newPrice > p.entryPrice)
+              : (p.tp1Price < p.entryPrice && p.tp1Price > 0 && newPrice <= p.tp1Price && newPrice < p.entryPrice);
+
+            const tpKey = `${p.id}-TP1`;
+            if (!p.tp1Hit && !executedTpsRef.current.has(tpKey) && reachedTp) {
+              executedTpsRef.current.add(tpKey);
               updatedPos.tp1Hit = true;
-              updatedPos.currentSize = p.initialSize * 0.75;
-              const tp1Pnl = p.equityUsed * 0.25 * (p.leverage * (config.rrTp1 * 0.015));
-              updatedPos.realizedPnl += tp1Pnl;
-              updatedPos.slPrice = p.entryPrice;
-
-              addLog({
-                groupName: p.groupName,
-                symbol: p.symbol,
-                type: 'TP1_HIT',
-                side: p.side,
-                price: newPrice,
-                sizeFraction: '25% Scaled Out',
-                pnl: tp1Pnl,
-                message: `Target 1 hit at $${newPrice}. 25% position closed, SL set to Break-Even.`,
-              });
-              sendTelegramAlert('TP1_HIT', p, newPrice, tp1Pnl);
-
-              if (apiKey && secretKey) {
-                // Real 25% partial close, then move exchange TP/SL
-                // (SL -> break-even, TP -> next target)
-                const tp1Qty = Math.floor(p.contractVol * 0.25);
-                if (tp1Qty >= 1) {
-                  updatedPos.closedVol = p.closedVol + tp1Qty;
-                  executeMexcClose(p.symbol, isLong ? 1 : 2, tp1Qty);
-                }
-                executeMexcTpsl(p.symbol, isLong ? 1 : 2, p.tp2Price, p.entryPrice, Math.max(1, p.contractVol - updatedPos.closedVol));
-              }
-            }
-
-            if (p.tp1Hit && !p.tp2Hit && (isLong ? newPrice >= p.tp2Price : newPrice <= p.tp2Price)) {
               updatedPos.tp2Hit = true;
-              updatedPos.currentSize = p.initialSize * 0.25;
-              const tp2Pnl = p.equityUsed * 0.5 * (p.leverage * (config.rrTp2 * 0.015));
-              updatedPos.realizedPnl += tp2Pnl;
-
-              addLog({
-                groupName: p.groupName,
-                symbol: p.symbol,
-                type: 'TP2_HIT',
-                side: p.side,
-                price: newPrice,
-                sizeFraction: '50% Scaled Out',
-                pnl: tp2Pnl,
-                message: `Target 2 hit at $${newPrice}. 50% position closed.`,
-              });
-              sendTelegramAlert('TP2_HIT', p, newPrice, tp2Pnl);
-
-              if (apiKey && secretKey) {
-                const tp2Qty = Math.floor(p.contractVol * 0.5);
-                if (tp2Qty >= 1) {
-                  updatedPos.closedVol = p.closedVol + tp2Qty;
-                  executeMexcClose(p.symbol, isLong ? 1 : 2, tp2Qty);
-                }
-              }
-            }
-
-            if (p.tp2Hit && !p.tp3Hit && (isLong ? newPrice >= p.tp3Price : newPrice <= p.tp3Price)) {
               updatedPos.tp3Hit = true;
               updatedPos.currentSize = 0;
               updatedPos.status = 'CLOSED';
-              updatedPos.closeReason = 'TP3';
-              const tp3Pnl = updatedPos.realizedPnl;
+              updatedPos.closeReason = 'TP1';
+              updatedPos.exitPrice = newPrice;
+              updatedPos.closedAt = Date.now();
+              updatedPos.unrealizedPnl = 0;
+              updatedPos.unrealizedPnlPct = 0;
+              const tpPnl = p.equityUsed * movePct * p.leverage;
+              updatedPos.realizedPnl += tpPnl;
+              updatedPos.realizedPnlPct = p.equityUsed > 0 ? (updatedPos.realizedPnl / p.equityUsed) * 100 : 0;
+              const estFee = Number(((p.equityUsed * p.leverage) * 0.0008).toFixed(4));
+              updatedPos.fee = estFee;
+              updatedPos.fundingFee = 0;
+              updatedPos.netRealizedPnl = Number((updatedPos.realizedPnl - estFee).toFixed(4));
 
               addLog({
                 groupName: p.groupName,
                 symbol: p.symbol,
-                type: 'TP3_HIT',
+                type: 'TP_HIT',
                 side: p.side,
                 price: newPrice,
-                sizeFraction: '100% Full Exit',
-                pnl: tp3Pnl,
-                message: `Target 3 reached at $${newPrice}. Full position completed!`,
+                sizeFraction: '100% Full Exit (1:2 Target)',
+                pnl: updatedPos.realizedPnl,
+                fee: updatedPos.fee,
+                fundingFee: 0,
+                netPnl: updatedPos.netRealizedPnl,
+                message: `Take Profit 1:2 Hit: ${p.symbol} (${p.side}) closed at $${newPrice < 1 ? newPrice.toFixed(6) : newPrice.toFixed(4)}. Realized Profit: +$${updatedPos.realizedPnl.toFixed(2)} (Net: +$${updatedPos.netRealizedPnl.toFixed(2)}, Fee: -$${estFee.toFixed(4)}).`,
               });
-              sendTelegramAlert('TP3_HIT', p, newPrice, tp3Pnl);
+              sendTelegramAlert('TP1_HIT', p, newPrice, updatedPos.realizedPnl);
 
               if (apiKey && secretKey) {
-                const remaining = p.contractVol - p.closedVol;
-                if (remaining >= 1) executeMexcClose(p.symbol, isLong ? 1 : 2, remaining);
+                executeMexcClose(p.symbol, isLong ? 1 : 2, p.contractVol);
               }
+              updatedPos.closedVol = p.contractVol;
             }
 
-            if ((isLong && newPrice <= p.slPrice) || (!isLong && newPrice >= p.slPrice)) {
+            const reachedSl = isLong
+              ? (p.slPrice < p.entryPrice && p.slPrice > 0 && newPrice <= p.slPrice && newPrice < p.entryPrice)
+              : (p.slPrice > p.entryPrice && newPrice >= p.slPrice && newPrice > p.entryPrice);
+
+            const slKey = `${p.id}-SL`;
+            if (!p.slHit && !executedTpsRef.current.has(slKey) && reachedSl) {
+              executedTpsRef.current.add(slKey);
               updatedPos.slHit = true;
               updatedPos.currentSize = 0;
               updatedPos.status = 'CLOSED';
               updatedPos.closeReason = 'SL';
-              const slPnl = unPnl;
+              updatedPos.exitPrice = newPrice;
+              updatedPos.closedAt = Date.now();
+              updatedPos.unrealizedPnl = 0;
+              updatedPos.unrealizedPnlPct = 0;
+              const remainingFraction = p.contractVol > 0 ? Math.max(0, (p.contractVol - updatedPos.closedVol) / p.contractVol) : 1.0;
+              const slPnl = (p.equityUsed * remainingFraction) * movePct * p.leverage;
+              updatedPos.realizedPnl += slPnl;
+              updatedPos.realizedPnlPct = p.equityUsed > 0 ? (updatedPos.realizedPnl / p.equityUsed) * 100 : 0;
+              const estFee = Number(((p.equityUsed * p.leverage) * 0.0008).toFixed(4));
+              updatedPos.fee = estFee;
+              updatedPos.fundingFee = 0;
+              updatedPos.netRealizedPnl = Number((updatedPos.realizedPnl - estFee).toFixed(4));
+
+              // Activate escalated post-loss cooldown to prevent churn on chopping coin
+              triggerLossCooldown(p.symbol, 'Stop Loss Hit');
 
               addLog({
                 groupName: p.groupName,
@@ -572,14 +904,18 @@ export default function Home() {
                 side: p.side,
                 price: newPrice,
                 pnl: slPnl,
-                message: `Stop Loss executed at $${newPrice}. Capital preserved.`,
+                fee: updatedPos.fee,
+                fundingFee: 0,
+                netPnl: updatedPos.netRealizedPnl,
+                message: `Stop Loss Hit: ${p.symbol} (${p.side}) executed at $${newPrice < 1 ? newPrice.toFixed(6) : newPrice.toFixed(4)}. Realized Loss: -$${Math.abs(slPnl).toFixed(2)} (Net: -$${Math.abs(updatedPos.netRealizedPnl).toFixed(2)}, Fee: -$${estFee.toFixed(4)}). Post-loss cooldown activated on ${p.symbol}.`,
               });
               sendTelegramAlert('SL_HIT', p, newPrice, slPnl);
 
               if (apiKey && secretKey) {
-                const remaining = p.contractVol - p.closedVol;
+                const remaining = Math.max(0, p.contractVol - updatedPos.closedVol);
                 if (remaining >= 1) executeMexcClose(p.symbol, isLong ? 1 : 2, remaining);
               }
+              updatedPos.closedVol = p.contractVol;
             }
 
             return updatedPos;
@@ -595,28 +931,32 @@ export default function Home() {
     };
   }, [openSymbolsKey, config, apiKey, secretKey, addLog, sendTelegramAlert]);
 
-  // Automated Trade Execution Pipeline (Enforces MAX 8 Open Positions together)
+  // Automated Trade Execution Pipeline - Executes trades when candles close (every 1 minute)
   const autoExecuteConfirmedTrade = useCallback(async (
     symbol: string,
     side: 'BUY' | 'SELL',
     analysis: SignalResult,
     ticker?: MexcTicker
   ): Promise<boolean> => {
-    if (equity <= 0) {
+    console.log('[Trade] Attempting to execute', side, 'on', symbol, 'equity=', equity, 'availableBalance=', availableBalance);
+    
+    const currentAvail = availableBalance !== null ? availableBalance : equity;
+    if (currentAvail < MIN_AVAILABLE_BALANCE_USDT || equity < MIN_AVAILABLE_BALANCE_USDT) {
       addLog({
         groupName: ticker?.groupName || 'Risk Engine',
         symbol,
-        type: 'SCAN_SIGNAL',
+        type: 'ELIMINATED_OPPORTUNITY',
         side: 'INFO',
         price: ticker?.lastPrice || 0,
-        message: `Trade on ${symbol} skipped: No MEXC account balance loaded. Add API credentials in Settings.`,
+        message: `Trade skipped: Available balance ($${currentAvail.toFixed(2)}) is below minimum safety threshold ($${MIN_AVAILABLE_BALANCE_USDT.toFixed(2)}).`,
       });
+      console.warn(`[Trade] BLOCKED: available balance ($${currentAvail.toFixed(2)}) < $${MIN_AVAILABLE_BALANCE_USDT.toFixed(2)}`);
       return false;
     }
 
     const tradePrice = analysis.entryPrice || ticker?.lastPrice || 100;
-    const lev = analysis.recommendedLeverage || 12;
-    const tradeEquity = equity * (config.equityRiskPct / 100); // 10% equity
+    const lev = Math.min(Math.max(analysis.recommendedLeverage || 7, config.minLeverage || 6), config.maxLeverage || 8);
+    const tradeEquity = equity * (config.equityRiskPct / 100); // Sized to equity risk
 
     // Convert USDT notional into MEXC contract volume (vol is denominated in contracts)
     // Use server-side API route to avoid CORS issues
@@ -634,10 +974,10 @@ export default function Home() {
       addLog({
         groupName: ticker?.groupName || 'Risk Engine',
         symbol,
-        type: 'SCAN_SIGNAL',
+        type: 'ELIMINATED_OPPORTUNITY',
         side: 'INFO',
         price: tradePrice,
-        message: `Trade on ${symbol} skipped: contract size unavailable from MEXC.`,
+        message: `Eliminated Opportunity: Trade on ${symbol} skipped — contract size specification unavailable from MEXC.`,
       });
       return false;
     }
@@ -646,10 +986,40 @@ export default function Home() {
       addLog({
         groupName: ticker?.groupName || 'Risk Engine',
         symbol,
-        type: 'SCAN_SIGNAL',
+        type: 'ELIMINATED_OPPORTUNITY',
         side: 'INFO',
         price: tradePrice,
-        message: `Trade on ${symbol} skipped: notional below MEXC minimum contract size (needs ${Math.ceil((contractSize * tradePrice) / (lev || 1))}+ USDT margin).`,
+        message: `Eliminated Opportunity: Trade on ${symbol} skipped — notional below MEXC minimum contract size (needs ${Math.ceil((contractSize * tradePrice) / (lev || 1))}+ USDT margin).`,
+      });
+      return false;
+    }
+
+    // Trade Confidence Score Filter: ONLY execute trades with confidence score >= minConfidence (default 80%)
+    const minConf = config.minConfidence || 80;
+    const confidenceScore = analysis.confidence ?? 0;
+    if (confidenceScore < minConf) {
+      addLog({
+        groupName: ticker?.groupName || 'Risk Engine',
+        symbol,
+        type: 'ELIMINATED_OPPORTUNITY',
+        side: 'INFO',
+        price: tradePrice,
+        message: `Eliminated Opportunity: Trade on ${symbol} skipped — Confidence score ${confidenceScore}% < ${minConf}% threshold. High-conviction execution policy enforced.`,
+      });
+      return false;
+    }
+
+    // 30-Minute Post-Loss Cooldown Check: prevents repeat churning of stopped-out coins
+    const cooldownUntil = lossCooldownsRef.current.get(symbol);
+    if (cooldownUntil && cooldownUntil > Date.now()) {
+      const remainingMin = Math.ceil((cooldownUntil - Date.now()) / 60000);
+      addLog({
+        groupName: ticker?.groupName || 'Risk Engine',
+        symbol,
+        type: 'ELIMINATED_OPPORTUNITY',
+        side: 'INFO',
+        price: tradePrice,
+        message: `Eliminated Opportunity: Trade on ${symbol} skipped — Asset in post-loss cooldown (${remainingMin}m remaining) to protect capital after previous Stop Loss.`,
       });
       return false;
     }
@@ -662,32 +1032,74 @@ export default function Home() {
       addLog({
         groupName: ticker?.groupName || 'Risk Engine',
         symbol,
-        type: 'SCAN_SIGNAL',
+        type: 'ELIMINATED_OPPORTUNITY',
         side: 'INFO',
         price: ticker?.lastPrice || 0,
-        message: `MAX POSITIONS LIMIT REACHED (8/8). Trade on ${symbol} skipped to preserve risk ceiling.`,
+        message: `Eliminated Opportunity: Trade on ${symbol} skipped — MAX POSITIONS LIMIT REACHED (${MAX_OPEN_POSITIONS}/${MAX_OPEN_POSITIONS}). Preserving risk ceiling.`,
       });
       return false;
     }
 
-    if (currentPositions.some((p) => p.status === 'OPEN' && p.symbol === symbol)) {
+    const existingPos = currentPositions.find((p) => p.status === 'OPEN' && p.symbol === symbol);
+    if (existingPos) {
+      addLog({
+        groupName: ticker?.groupName || 'Risk Engine',
+        symbol,
+        type: 'ELIMINATED_OPPORTUNITY',
+        side: 'INFO',
+        price: tradePrice,
+        message: `Eliminated Opportunity: Trade on ${symbol} skipped — Position already open in portfolio (${existingPos.side} at $${formatPrice(existingPos.entryPrice)}). Preserving risk ceiling of 1 position per coin.`,
+      });
       return true; // Already open, counts as "handled"
     }
 
-    // Find an available idle bot
+    const groupName = ticker?.groupName || 'Apex Cyber-Volatiles';
+
+    // Find an available idle bot: prioritize bot assigned to this group, otherwise any idle bot
     const activeBotIds = new Set(
       currentPositions.filter((p) => p.status === 'OPEN').map((p) => p.botId)
     );
-    const availableBot = bots.find((b) => !activeBotIds.has(b.id)) || bots[0];
+    const availableBot =
+      bots.find((b) => b.assignedGroup === groupName && !activeBotIds.has(b.id)) ||
+      bots.find((b) => !activeBotIds.has(b.id)) ||
+      bots[0];
 
-    const riskDist = analysis.riskDist || tradePrice * 0.015;
+    const calculatedSl = analysis.slLevel || (side === 'BUY' ? tradePrice * 0.985 : tradePrice * 1.015);
+    const riskDist = analysis.riskDist || Math.abs(tradePrice - calculatedSl);
+    const calculatedTp = analysis.tpLevel || (side === 'BUY' ? tradePrice + riskDist * (config.riskRewardRatio || 2.0) : tradePrice - riskDist * (config.riskRewardRatio || 2.0));
 
-    const slPrice = analysis.slLevel || (side === 'BUY' ? tradePrice - riskDist : tradePrice + riskDist);
-    const tp1Price = analysis.tp1Level || (side === 'BUY' ? tradePrice + riskDist * config.rrTp1 : tradePrice - riskDist * config.rrTp1);
-    const tp2Price = analysis.tp2Level || (side === 'BUY' ? tradePrice + riskDist * config.rrTp2 : tradePrice - riskDist * config.rrTp2);
-    const tp3Price = analysis.tp3Level || (side === 'BUY' ? tradePrice + riskDist * config.rrTp3 : tradePrice - riskDist * config.rrTp3);
+    if (calculatedTp <= 0 || calculatedSl <= 0) {
+      addLog({
+        groupName,
+        symbol,
+        type: 'ELIMINATED_OPPORTUNITY',
+        side: 'INFO',
+        price: tradePrice,
+        message: `Eliminated Opportunity: Trade on ${symbol} skipped — Negative TP/SL risk calculation (SL: $${calculatedSl.toFixed(4)}, TP: $${calculatedTp.toFixed(4)}).`,
+      });
+      return false;
+    }
 
-    const groupName = ticker?.groupName || 'Apex Cyber-Volatiles';
+    const decimals = tradePrice < 0.0001 ? 8 : tradePrice < 0.01 ? 7 : tradePrice < 1 ? 6 : tradePrice < 100 ? 4 : 2;
+    let slPrice = Number(calculatedSl.toFixed(decimals));
+    let tpPrice = Number(calculatedTp.toFixed(decimals));
+
+    // Strict validation: TP must be favorable and SL must be adverse compared to entry
+    if (side === 'BUY') {
+      if (tpPrice <= tradePrice) {
+        tpPrice = Number((tradePrice + Math.max(riskDist * (config.riskRewardRatio || 2.0), Math.pow(10, -decimals))).toFixed(decimals));
+      }
+      if (slPrice >= tradePrice) {
+        slPrice = Number((tradePrice - Math.max(riskDist, Math.pow(10, -decimals))).toFixed(decimals));
+      }
+    } else {
+      if (tpPrice >= tradePrice) {
+        tpPrice = Number(Math.max(0, tradePrice - Math.max(riskDist * (config.riskRewardRatio || 2.0), Math.pow(10, -decimals))).toFixed(decimals));
+      }
+      if (slPrice <= tradePrice) {
+        slPrice = Number((tradePrice + Math.max(riskDist, Math.pow(10, -decimals))).toFixed(decimals));
+      }
+    }
 
     const newPosition: MexcPosition = {
       id: `pos-${symbol}-${Date.now()}`,
@@ -705,10 +1117,10 @@ export default function Home() {
       equityUsed: tradeEquity,
       contractVol,
       closedVol: 0,
-      slPrice: Number(slPrice.toFixed(6)),
-      tp1Price: Number(tp1Price.toFixed(6)),
-      tp2Price: Number(tp2Price.toFixed(6)),
-      tp3Price: Number(tp3Price.toFixed(6)),
+      slPrice,
+      tp1Price: tpPrice,
+      tp2Price: tpPrice,
+      tp3Price: tpPrice,
       tp1Hit: false,
       tp2Hit: false,
       tp3Hit: false,
@@ -732,27 +1144,45 @@ export default function Home() {
 
     const botDisplayName = availableBot.name.replace('Monorid ', '');
 
-    // Add log with bot attribution
+    // Add log with bot attribution: Comprehensive Trade Executed Event
     addLog({
       groupName,
       botCode: botDisplayName,
       botName: botDisplayName,
       symbol,
-      type: 'ENTRY',
+      type: 'TRADE_EXECUTED',
       side: newPosition.side,
       price: tradePrice,
-      sizeFraction: `Slot ${activeCount + 1}/8 (10% Equity • ${lev}x • ${contractVol} Contracts)`,
-      message: `[AUTO-EXECUTION] ${botDisplayName} triggered ${newPosition.side} on CRUDE OIL 3M signal (EMA 200 confirmed). SL: $${slPrice.toFixed(4)}, TP1: $${tp1Price.toFixed(4)}, TP2: $${tp2Price.toFixed(4)}, TP3: $${tp3Price.toFixed(4)}.`,
+      sizeFraction: `Slot ${activeCount + 1} (10% Equity • ${lev}x • ${contractVol} Contracts)`,
+      message: `[TRADE EXECUTED] ${botDisplayName} placed ${newPosition.side} on ${symbol} | Contracts: ${contractVol} | Entry: $${tradePrice.toFixed(4)} | Leverage: ${lev}x | SL: $${slPrice.toFixed(4)} (EMA 200) | TP: $${tpPrice.toFixed(4)} (1:2 Target • 100% Exit) | Conviction: ${confidenceScore}%.`,
     });
 
-    // Send Telegram alert
-    sendTelegramAlert('ENTRY', newPosition, tradePrice);
+    // Send Telegram alert with same-candle timing metadata
+    sendTelegramAlert('ENTRY', newPosition, tradePrice, undefined, analysis.candleTiming);
 
     // Execute real order on MEXC
     if (apiKey && secretKey) {
-      executeMexcOrder(symbol, side, lev, contractVol, slPrice, tp3Price).then((result) => {
+      executeMexcOrder(symbol, side, lev, contractVol, slPrice, tpPrice).then((result) => {
         if (!result.success) {
           console.warn('[MEXC] Order rejected:', result.message);
+          
+          // Check if contract is not activated
+          if (result.message && result.message.includes('Contract not activated')) {
+            setNonActivatedContracts((prev) => {
+              const updated = new Set(prev);
+              updated.add(symbol);
+              return updated;
+            });
+            addLog({
+              groupName,
+              symbol,
+              type: 'ELIMINATED_OPPORTUNITY',
+              side: 'INFO',
+              price: tradePrice,
+              message: `[CONTRACT NOT ACTIVATED] ${symbol} is not activated on your MEXC futures account. Skipped from execution.`,
+            });
+          }
+          
           setPositions((prev) => {
             const filtered = prev.filter((p) => p.id !== newPosition.id);
             positionsRef.current = filtered;
@@ -766,85 +1196,171 @@ export default function Home() {
           addLog({
             groupName,
             symbol,
-            type: 'SCAN_SIGNAL',
+            type: 'ELIMINATED_OPPORTUNITY',
             side: 'INFO',
             price: tradePrice,
             message: `[AUTO-REVERT] ${botDisplayName} position on ${symbol} reverted — MEXC order failed: ${result.message}. Slot freed.`,
           });
         } else {
-          // Order succeeded — wait briefly for position to fill, then set TP/SL on exchange automatically
+          // Order succeeded — store exchange orderId and place native TP/SL trigger orders on MEXC
+          if (result?.orderId) {
+            setPositions((prev) => {
+              const updated = prev.map((p) => (p.id === newPosition.id ? { ...p, orderId: String(result.orderId) } : p));
+              positionsRef.current = updated;
+              return updated;
+            });
+          }
           const positionType = side === 'BUY' ? 1 : 2; // 1=Long, 2=Short
           setTimeout(() => {
-            executeMexcTpsl(symbol, positionType, tp3Price, slPrice, contractVol, 1).then((tpslResult) => {
+            console.log('[MEXC] Placing exchange TP/SL plan orders for', symbol, 'positionType:', positionType, 'TP:', tpPrice, 'SL:', slPrice, 'contractVol:', contractVol);
+            executeMexcTpsl(symbol, positionType, tpPrice, slPrice, contractVol, 1, contractVol).then((tpslResult) => {
               if (tpslResult.success) {
-                console.log('[MEXC] TP/SL set automatically for', symbol);
+                console.log('[MEXC] Exchange TP/SL plan orders active on MEXC for', symbol);
                 addLog({
                   groupName,
                   symbol,
-                  type: 'ENTRY',
+                  type: 'TPSL',
                   side: newPosition.side,
                   price: tradePrice,
-                  message: `[AUTO-TP/SL] Exchange TP/SL set: SL=$${slPrice.toFixed(4)}, TP=$${tp3Price.toFixed(4)} for ${contractVol} contracts.`,
+                  message: `[EXCHANGE TP/SL ACTIVE] Native orders placed on MEXC platform: SL=$${formatPrice(slPrice)} (EMA 200), TP=$${formatPrice(tpPrice)} (1:2 Target • ${contractVol} contracts). Visible in MEXC Trigger Orders tab.`,
                 });
               } else {
-                console.warn('[MEXC] TP/SL setup failed:', tpslResult.message);
+                console.warn('[MEXC] Exchange TP/SL setup warning:', tpslResult.message);
                 addLog({
                   groupName,
                   symbol,
-                  type: 'ENTRY',
+                  type: 'TPSL',
                   side: newPosition.side,
                   price: tradePrice,
-                  message: `[WARNING] TP/SL setup failed on exchange: ${tpslResult.message}. Client-side monitoring active.`,
+                  message: `[NOTICE] Exchange TP/SL: ${tpslResult.message}. Real-time WebSocket monitoring active.`,
                 });
               }
             });
-          }, 1500); // Wait 1.5s for position to fill on exchange
+          }, 2000); // 2s wait for position fill
         }
       });
     }
 
     setPositions(positionsRef.current);
     return true;
-  }, [bots, equity, config, addLog, sendTelegramAlert, apiKey, secretKey]);
+  }, [bots, equity, availableBalance, config, addLog, sendTelegramAlert, apiKey, secretKey]);
 
   // Auto-execute confirmed scanner signals while AUTO TRADING is enabled
-  const MAX_SIGNAL_RETRIES = 3;
-  const SIGNAL_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
-  const RETRY_COOLDOWN_MS = 25000; // 25s between retries (one scan cycle)
+  const MAX_SIGNAL_RETRIES = 2;
+  const SIGNAL_EXPIRY_MS = 60 * 1000; // Strictly 60 seconds (1 minute max freshness - no old signals)
+  const RETRY_COOLDOWN_MS = 15000; // 15 seconds cooldown between retry checks
+
+  // Track contracts that are not activated on MEXC (persisted in localStorage)
+  const [nonActivatedContracts, setNonActivatedContracts] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('monorid_non_activated_contracts');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
 
   useEffect(() => {
-    if (!isAutoTrading || !apiKey || !secretKey) return;
+    try {
+      localStorage.setItem('monorid_non_activated_contracts', JSON.stringify(Array.from(nonActivatedContracts)));
+    } catch (err) {
+      console.warn('Failed to save nonActivatedContracts to localStorage:', err);
+    }
+  }, [nonActivatedContracts]);
 
-    const now = Date.now();
-    const toRemove = new Set<string>();
-    const toExecute: ActiveSignalItem[] = [];
+  useEffect(() => {
+    if (!isAutoTrading || !apiKey || !secretKey) {
+      console.log('[Execution] Blocked: isAutoTrading=', isAutoTrading, 'apiKey=', !!apiKey, 'secretKey=', !!secretKey);
+      return;
+    }
+
+    const executeSignals = async () => {
+      const now = Date.now();
+      const toRemove = new Set<string>();
+      const toExecute: ActiveSignalItem[] = [];
+
+      console.log('[Execution] Checking', activeSignals.length, 'active signals, equity=', equity, 'availableBalance=', availableBalance);
+
+      const currentAvail = availableBalance !== null ? availableBalance : equity;
+      if (currentAvail < MIN_AVAILABLE_BALANCE_USDT || equity < MIN_AVAILABLE_BALANCE_USDT) {
+        if (activeSignals.length > 0) {
+          const sig = activeSignals[0];
+          const logKey = `low-balance-${Math.floor(Date.now() / 60000)}`;
+          if (!loggedEliminatedRef.current.has(logKey)) {
+            loggedEliminatedRef.current.add(logKey);
+            addLog({
+              groupName: sig.groupName || 'Risk Engine',
+              symbol: sig.symbol,
+              type: 'ELIMINATED_OPPORTUNITY',
+              side: 'INFO',
+              price: sig.price || 0,
+              message: `Trade skipped: Available balance ($${currentAvail.toFixed(2)}) is below minimum safety threshold ($${MIN_AVAILABLE_BALANCE_USDT.toFixed(2)}).`,
+            });
+          }
+        }
+        console.log(`[Execution] Blocked: Available balance ($${currentAvail.toFixed(2)}) < $${MIN_AVAILABLE_BALANCE_USDT.toFixed(2)}`);
+        return;
+      }
 
     for (const sig of activeSignals) {
       if (sig.status !== 'ACTIVE') {
         toRemove.add(sig.symbol);
         continue;
       }
+      
+      // Skip non-activated contracts
+      if (nonActivatedContracts.has(sig.symbol)) {
+        toRemove.add(sig.symbol);
+        addLog({
+          groupName: sig.groupName,
+          symbol: sig.symbol,
+          type: 'ELIMINATED_OPPORTUNITY',
+          side: 'INFO',
+          price: sig.price,
+          message: `Eliminated Opportunity: Signal skipped on ${sig.symbol} — Contract not activated on MEXC futures account.`,
+        });
+        continue;
+      }
+
+      // Skip coins in 30-Minute Post-Loss Cooldown
+      const cooldownUntil = lossCooldownsRef.current.get(sig.symbol);
+      if (cooldownUntil && cooldownUntil > now) {
+        const remainingMin = Math.ceil((cooldownUntil - now) / 60000);
+        toRemove.add(sig.symbol);
+        addLog({
+          groupName: sig.groupName,
+          symbol: sig.symbol,
+          type: 'ELIMINATED_OPPORTUNITY',
+          side: 'INFO',
+          price: sig.price,
+          message: `Eliminated Opportunity: Signal skipped on ${sig.symbol} — Asset in post-loss cooldown (${remainingMin}m remaining) after Stop Loss.`,
+        });
+        continue;
+      }
+      
       if (sig.retryCount >= MAX_SIGNAL_RETRIES) {
         toRemove.add(sig.symbol);
         addLog({
           groupName: sig.groupName,
           symbol: sig.symbol,
-          type: 'SCAN_SIGNAL',
+          type: 'ELIMINATED_OPPORTUNITY',
           side: 'INFO',
           price: sig.price,
-          message: `Trade on ${sig.symbol} failed after ${MAX_SIGNAL_RETRIES} retries. Signal removed.`,
+          message: `Eliminated Opportunity: Trade on ${sig.symbol} skipped — Maximum execution retries (${MAX_SIGNAL_RETRIES}) reached.`,
         });
         continue;
       }
-      if (now - sig.timestamp > SIGNAL_EXPIRY_MS) {
+      // Strictly enforce: trade executed ONLY if signal is fresh (< 60s old)
+      const signalAge = now - sig.timestamp;
+      if (signalAge > SIGNAL_EXPIRY_MS) {
         toRemove.add(sig.symbol);
         addLog({
           groupName: sig.groupName,
           symbol: sig.symbol,
-          type: 'SCAN_SIGNAL',
+          type: 'ELIMINATED_OPPORTUNITY',
           side: 'INFO',
           price: sig.price,
-          message: `Signal on ${sig.symbol} expired after ${Math.round((now - sig.timestamp) / 1000)}s (retries: ${sig.retryCount}/${MAX_SIGNAL_RETRIES}).`,
+          message: `Eliminated Opportunity: Stale signal skipped on ${sig.symbol} (${Math.round(signalAge / 1000)}s old > 60s limit). Execution policy: fresh signals (< 1 min) only.`,
         });
         continue;
       }
@@ -859,6 +1375,22 @@ export default function Home() {
         continue;
       }
 
+      // Strictly enforce: trade executed ONLY if confidence score is >= minConfidence (default 80%)
+      const minConf = config.minConfidence || 80;
+      const confidence = sig.confidence || analysis.confidence || 0;
+      if (confidence < minConf) {
+        toRemove.add(sig.symbol);
+        addLog({
+          groupName: sig.groupName,
+          symbol: sig.symbol,
+          type: 'ELIMINATED_OPPORTUNITY',
+          side: 'INFO',
+          price: sig.price,
+          message: `Eliminated Opportunity: Trade skipped on ${sig.symbol} — Confidence score ${confidence}% < ${minConf}% threshold. High-conviction execution policy enforced.`,
+        });
+        continue;
+      }
+
       toExecute.push(sig);
     }
 
@@ -867,6 +1399,13 @@ export default function Home() {
     }
 
     for (const sig of toExecute) {
+      // Re-verify freshness immediately before trade dispatch
+      if (Date.now() - sig.timestamp > SIGNAL_EXPIRY_MS) {
+        executingSymbolsRef.current.delete(sig.symbol);
+        setActiveSignals((prev) => prev.filter((s) => s.symbol !== sig.symbol));
+        continue;
+      }
+
       executingSymbolsRef.current.add(sig.symbol);
       lastAttemptRef.current.set(sig.symbol, now);
       const ticker = tickers.find((t) => t.symbol === sig.symbol);
@@ -875,6 +1414,9 @@ export default function Home() {
         executingSymbolsRef.current.delete(sig.symbol);
         continue;
       }
+
+      // Instant same-candle trade execution (minimal micro-yield to ensure UI responsiveness)
+      await new Promise(resolve => setTimeout(resolve, 50));
 
       autoExecuteConfirmedTrade(sig.symbol, analysis.action, analysis, ticker)
         .then((success) => {
@@ -896,8 +1438,11 @@ export default function Home() {
         .finally(() => {
           executingSymbolsRef.current.delete(sig.symbol);
         });
-    }
-  }, [activeSignals, isAutoTrading, scanResults, tickers, autoExecuteConfirmedTrade, apiKey, secretKey, addLog]);
+      }
+    };
+
+    executeSignals();
+  }, [activeSignals, isAutoTrading, scanResults, tickers, autoExecuteConfirmedTrade, apiKey, secretKey, nonActivatedContracts, addLog, availableBalance, equity]);
 
   // 4. Periodic re-sync: reconcile local positions with real MEXC exchange state
   useEffect(() => {
@@ -905,13 +1450,24 @@ export default function Home() {
 
     const syncFromExchange = async () => {
       try {
-        const res = await fetch('/api/mexc/order', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'positions', apiKey, secretKey }),
-        });
-        const payload = await res.json();
-        const raw = Array.isArray(payload?.data) ? payload.data : [];
+        const [posRes, histRes] = await Promise.all([
+          fetch('/api/mexc/order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'positions', apiKey, secretKey }),
+          }),
+          fetch('/api/mexc/order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'history_orders', page_size: 50, apiKey, secretKey }),
+          }),
+        ]);
+
+        const posPayload = await posRes.json().catch(() => ({}));
+        const histPayload = await histRes.json().catch(() => ({}));
+
+        const raw = Array.isArray(posPayload?.data) ? posPayload.data : [];
+        const historyOrders = Array.isArray(histPayload?.data) ? histPayload.data : [];
 
         const exchangeSymbols = new Set(raw.map((p: any) => p.symbol).filter(Boolean));
 
@@ -931,9 +1487,197 @@ export default function Home() {
         }
 
         setPositions((prev) => {
+          // 1. Separate existing closed positions from local state
+          const existingClosed = prev.filter((p) => p.status === 'CLOSED');
+
+          // 2. Open positions that are still active on MEXC
           const kept = prev.filter((p) => p.status === 'OPEN' && exchangeSymbols.has(p.symbol));
           const keptSymbols = new Set(kept.map((p) => p.symbol));
-          const removed = prev.filter((p) => p.status === 'OPEN' && !keptSymbols.has(p.symbol));
+
+          // 3. Filter real completed close orders from MEXC API (must be completed filled close orders)
+          const validCloseOrders = historyOrders.filter((order: any) => {
+            const hasDealVol = Number(order.dealVol) > 0;
+            const isCompleted = order.state === 3;
+            const isCloseSide = order.side === 2 || order.side === 4;
+            return isCompleted && hasDealVol && (isCloseSide || (order.profit !== 0 && order.profit !== undefined));
+          });
+
+          // Open positions that are no longer in MEXC open list: they closed on exchange!
+          // If a matching close order exists in validCloseOrders, the order mapping below will handle it with full attribution.
+          // Otherwise, record as fallback closed position only if verified.
+          const fallbackClosed: MexcPosition[] = [];
+          for (const p of prev) {
+            if (p.status === 'OPEN' && !keptSymbols.has(p.symbol)) {
+              // If the position was created recently (<45s), do not assume it has vanished/closed
+              if (p.createdAt && Date.now() - p.createdAt < 45000) {
+                kept.push(p);
+                continue;
+              }
+
+              const hasMatchingOrder = validCloseOrders.some((o: any) =>
+                (p.orderId && String(o.orderId) === String(p.orderId)) ||
+                (p.positionId && String(o.positionId) === String(p.positionId)) ||
+                o.symbol === p.symbol
+              );
+
+              if (!hasMatchingOrder) {
+                // If there is no matching completed close order on MEXC:
+                // Check if market price actually penetrated the strategy Stop Loss or Take Profit
+                const isLong = p.side === 'LONG';
+                const curPrice = p.currentPrice || p.entryPrice;
+                const reachedSl = isLong
+                  ? (p.slPrice < p.entryPrice && p.slPrice > 0 && curPrice <= p.slPrice && curPrice < p.entryPrice)
+                  : (p.slPrice > p.entryPrice && curPrice >= p.slPrice && curPrice > p.entryPrice);
+                const reachedTp = isLong
+                  ? (p.tp1Price > p.entryPrice && curPrice >= p.tp1Price && curPrice > p.entryPrice)
+                  : (p.tp1Price < p.entryPrice && p.tp1Price > 0 && curPrice <= p.tp1Price && curPrice < p.entryPrice);
+
+                // If neither SL nor TP was reached by market price, and there is no close order on MEXC:
+                // This position was never filled or was cancelled/rejected on MEXC!
+                // Discard/revert it completely to prevent phantom closed trades and false SL penalties.
+                if (!reachedSl && !reachedTp) {
+                  console.log(`[Sync] Discarding unfilled/cancelled position on ${p.symbol} (no exchange fill, TP/SL never reached)`);
+                  if (p.botId) {
+                    setBots((prevBots) =>
+                      prevBots.map((b) => (b.id === p.botId ? { ...b, status: 'ACTIVE', currentSymbol: undefined } : b))
+                    );
+                  }
+                  continue;
+                }
+
+                const closeReason: 'TP1' | 'TP2' | 'TP3' | 'SL' | 'MANUAL' = reachedTp ? 'TP1' : 'SL';
+                const estFee = Number(((p.equityUsed * p.leverage) * 0.0008).toFixed(4));
+                const finalPnl = p.realizedPnl || p.unrealizedPnl || 0;
+
+                fallbackClosed.push({
+                  ...p,
+                  status: 'CLOSED' as const,
+                  closeReason,
+                  closedAt: Date.now(),
+                  exitPrice: curPrice,
+                  realizedPnl: finalPnl,
+                  fee: p.fee || estFee,
+                  fundingFee: p.fundingFee || 0,
+                  netRealizedPnl: Number((finalPnl - (p.fee || estFee) + (p.fundingFee || 0)).toFixed(4)),
+                });
+
+                if (closeReason === 'SL') {
+                  triggerLossCooldown(p.symbol, 'Exchange Stop Loss');
+                }
+              }
+            }
+          }
+
+          // 4. Map real completed close orders from MEXC API
+          const exchangeClosed: MexcPosition[] = [];
+          for (const order of validCloseOrders) {
+            const feeInfo = extractOrderFeeAndFunding(order);
+            const side: 'LONG' | 'SHORT' = order.side === 4 ? 'LONG' : order.side === 2 ? 'SHORT' : (feeInfo.realizedPnl >= 0 ? 'LONG' : 'SHORT');
+            const entry = Number(order.openAvgPrice) || 0;
+            const exit = Number(order.dealAvgPrice) || entry;
+            const pnl = feeInfo.realizedPnl;
+            const pnlRate = Number(order.pnlRate) || 0;
+
+            // Look for matching local position to preserve original bot attribution and TP/SL target levels
+            const localMatch = prev.find((p) =>
+              (p.orderId && String(p.orderId) === String(order.orderId)) ||
+              (p.positionId && String(p.positionId) === String(order.positionId)) ||
+              (p.symbol === order.symbol && Math.abs((p.closedAt || p.createdAt || 0) - (order.updateTime || order.createTime || 0)) <= 600000) ||
+              (p.symbol === order.symbol && p.status === 'OPEN')
+            );
+
+            const matchedTicker = tickersRef.current.find((t) => t.symbol === order.symbol);
+            const defaultGroup = matchedTicker?.groupName || 'Apex Cyber-Volatiles';
+            const defaultBot = OFFICIAL_BOT_UNITS.find((b) => b.assignedGroup === defaultGroup) || OFFICIAL_BOT_UNITS[0];
+
+            const botId = localMatch?.botId && localMatch.groupName !== 'Resynced (Exchange)' ? localMatch.botId : defaultBot.id;
+            const botCode = localMatch?.botCode && localMatch.groupName !== 'Resynced (Exchange)' ? localMatch.botCode : defaultBot.code;
+            const botName = localMatch?.botName && localMatch.groupName !== 'Resynced (Exchange)' ? localMatch.botName : defaultBot.name;
+            const groupName = localMatch?.groupName && localMatch.groupName !== 'Resynced (Exchange)' ? localMatch.groupName : defaultGroup;
+
+            const resolvedEntry = entry || localMatch?.entryPrice || Number(order.dealAvgPrice) || 0;
+            const targets = reconstructStrategyTargets(resolvedEntry, side);
+            const slPrice = localMatch?.slPrice && localMatch.slPrice > 0 ? localMatch.slPrice : targets.slPrice;
+            const tp1Price = localMatch?.tp1Price && localMatch.tp1Price > 0 ? localMatch.tp1Price : targets.tp1Price;
+            const equityUsed = localMatch?.equityUsed || Number(order.orderMargin) || 10;
+            const leverage = localMatch?.leverage || Number(order.leverage) || 7;
+            const orderId = String(order.orderId);
+            const positionId = order.positionId ? Number(order.positionId) : undefined;
+
+            const isLong = side === 'LONG';
+            const reachedSl = isLong
+              ? (slPrice < resolvedEntry && slPrice > 0 && exit <= slPrice)
+              : (slPrice > resolvedEntry && exit >= slPrice);
+            const reachedTp = isLong
+              ? (tp1Price > resolvedEntry && exit >= tp1Price)
+              : (tp1Price < resolvedEntry && tp1Price > 0 && exit <= tp1Price);
+
+            let closeReason: 'TP1' | 'TP2' | 'TP3' | 'SL' | 'MANUAL';
+            let hitTp = false;
+            let hitSl = false;
+
+            if (localMatch?.closeReason === 'TP2' || localMatch?.closeReason === 'TP3') {
+              closeReason = localMatch.closeReason;
+              hitTp = true;
+            } else if (reachedTp && pnl > 0.0001) {
+              closeReason = 'TP1';
+              hitTp = true;
+            } else if (reachedSl && pnl < -0.0001) {
+              closeReason = 'SL';
+              hitSl = true;
+            } else {
+              closeReason = 'MANUAL';
+            }
+
+            // Only trigger cooldown if trade was an actual verified Stop Loss hit
+            if (hitSl && reachedSl && order.createTime && (Date.now() - order.createTime < 30 * 60 * 1000)) {
+              triggerLossCooldown(order.symbol, 'Recent Exchange Loss');
+            }
+
+            exchangeClosed.push({
+              id: `mexc-${order.orderId}`,
+              orderId,
+              positionId,
+              symbol: order.symbol,
+              groupName,
+              botId,
+              botCode,
+              botName,
+              side,
+              entryPrice: entry || localMatch?.entryPrice || 0,
+              currentPrice: exit,
+              exitPrice: exit,
+              leverage,
+              initialSize: equityUsed,
+              currentSize: 0,
+              equityUsed,
+              contractVol: Number(order.dealVol) || Number(order.vol) || localMatch?.contractVol || 1,
+              closedVol: Number(order.dealVol) || Number(order.vol) || localMatch?.contractVol || 1,
+              slPrice,
+              tp1Price,
+              tp2Price: localMatch?.tp2Price || tp1Price,
+              tp3Price: localMatch?.tp3Price || tp1Price,
+              tp1Hit: hitTp,
+              tp2Hit: hitTp,
+              tp3Hit: hitTp,
+              slHit: hitSl,
+              unrealizedPnl: 0,
+              unrealizedPnlPct: 0,
+              realizedPnl: pnl,
+              realizedPnlPct: pnlRate ? pnlRate * 100 : (equityUsed > 0 ? (pnl / equityUsed) * 100 : 0),
+              fee: feeInfo.fee,
+              fundingFee: feeInfo.fundingFee,
+              netRealizedPnl: feeInfo.netPnl,
+              status: 'CLOSED' as const,
+              createdAt: Number(order.createTime) || localMatch?.createdAt || Date.now(),
+              closedAt: Number(order.updateTime) || Number(order.createTime) || Date.now(),
+              closeReason,
+            });
+          }
+
+          // Merge all closed positions and strictly deduplicate
+          const rawAllClosed = [...existingClosed, ...fallbackClosed, ...exchangeClosed];
+          const deduplicatedClosed = deduplicateClosedPositions(rawAllClosed);
 
           const takenBotIds = new Set(kept.filter((p) => p.botId).map((p) => p.botId));
           const seeded: MexcPosition[] = [];
@@ -957,8 +1701,11 @@ export default function Home() {
             takenBotIds.add(freeBot.id);
             const label = freeBot.name.replace('Monorid ', '');
 
+            const targets = reconstructStrategyTargets(entry, side);
+
             seeded.push({
               id: `sync-${p.symbol}-${Date.now()}`,
+              positionId: p.positionId,
               symbol: p.symbol,
               groupName: 'Resynced (Exchange)',
               botId: freeBot.id,
@@ -973,32 +1720,59 @@ export default function Home() {
               equityUsed,
               contractVol: vol,
               closedVol: 0,
-              slPrice: r(isLong ? entry - riskDist : entry + riskDist),
-              tp1Price: r(isLong ? entry + riskDist * config.rrTp1 : entry - riskDist * config.rrTp1),
-              tp2Price: r(isLong ? entry + riskDist * config.rrTp2 : entry - riskDist * config.rrTp2),
-              tp3Price: r(isLong ? entry + riskDist * config.rrTp3 : entry - riskDist * config.rrTp3),
+              slPrice: targets.slPrice,
+              tp1Price: targets.tp1Price,
+              tp2Price: targets.tp2Price,
+              tp3Price: targets.tp3Price,
               tp1Hit: false, tp2Hit: false, tp3Hit: false, slHit: false,
               unrealizedPnl: apiPnl,
               unrealizedPnlPct: pnlPct,
               realizedPnl: 0,
+              fee: 0,
+              fundingFee: 0,
+              netRealizedPnl: 0,
               status: 'OPEN',
               createdAt: Date.now(),
             });
             keptSymbols.add(p.symbol);
           }
 
-          const next = [...kept, ...seeded];
+          const next = [...kept, ...seeded, ...deduplicatedClosed];
           positionsRef.current = next;
 
-          if (removed.length > 0) {
-            addLog({
-              groupName: 'Risk Engine',
-              symbol: removed.map((p) => p.symbol).join(', '),
-              type: 'SCAN_SIGNAL',
-              side: 'INFO',
-              price: 0,
-              message: `Sync removed ${removed.length} phantom position(s) not found on MEXC exchange.`,
-            });
+          if (fallbackClosed.length > 0) {
+            for (const pos of fallbackClosed) {
+              const isTp = pos.closeReason === 'TP1' && (pos.realizedPnl !== undefined && pos.realizedPnl > 0.0001);
+              const exitPrice = pos.exitPrice || pos.currentPrice || pos.entryPrice;
+              if (isTp) {
+                addLog({
+                  groupName: pos.groupName,
+                  symbol: pos.symbol,
+                  type: 'TP_HIT',
+                  side: pos.side,
+                  price: exitPrice,
+                  sizeFraction: '100% Full Exit (1:2 Target)',
+                  pnl: pos.realizedPnl,
+                  fee: pos.fee,
+                  fundingFee: pos.fundingFee,
+                  netPnl: pos.netRealizedPnl,
+                  message: `Take Profit 1:2 Hit: ${pos.symbol} (${pos.side}) closed on MEXC exchange at $${formatPrice(exitPrice)}. Realized Profit: +$${(pos.realizedPnl || 0).toFixed(2)}${pos.fee ? ` (Net: +$${(pos.netRealizedPnl || 0).toFixed(2)}, Fee: -$${pos.fee.toFixed(4)})` : ''} (100% position exit).`,
+                });
+              } else {
+                addLog({
+                  groupName: pos.groupName,
+                  symbol: pos.symbol,
+                  type: 'SL_HIT',
+                  side: pos.side,
+                  price: exitPrice,
+                  pnl: pos.realizedPnl,
+                  fee: pos.fee,
+                  fundingFee: pos.fundingFee,
+                  netPnl: pos.netRealizedPnl,
+                  message: `Stop Loss Hit: ${pos.symbol} (${pos.side}) executed on MEXC exchange at $${formatPrice(exitPrice)}. Realized Loss: -$${Math.abs(pos.realizedPnl || 0).toFixed(2)}${pos.fee ? ` (Net: -$${Math.abs(pos.netRealizedPnl || 0).toFixed(2)}, Fee: -$${pos.fee.toFixed(4)})` : ''}. Post-loss cooldown activated on ${pos.symbol}.`,
+                });
+              }
+            }
           }
           if (seeded.length > 0) {
             addLog({
@@ -1032,16 +1806,27 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiKey, secretKey]);
 
-  // 5. Background Automated 24/7 Scanning Loop
+  // 5. Background Automated 24/7 Scanning Loop - scans every 30s for rapid same-candle detection
   useEffect(() => {
     const scanInterval = setInterval(() => {
       runScanner();
-    }, 25000);
+    }, 30000); // 30 seconds: allows immediate same-candle entry as soon as signal forms
 
     return () => {
       clearInterval(scanInterval);
     };
   }, [runScanner]);
+
+  // 6. Periodic Ticker Refresh Loop - keeps 24h market prices, volumes, and rankings fresh across all tabs
+  useEffect(() => {
+    const tickerInterval = setInterval(() => {
+      loadTickers();
+    }, 20000);
+
+    return () => {
+      clearInterval(tickerInterval);
+    };
+  }, [loadTickers]);
 
   // Inspect Candle Chart Modal
   const handleOpenChart = async (symbol: string) => {
@@ -1075,11 +1860,11 @@ export default function Home() {
           addLog({
             groupName: p.groupName,
             symbol: p.symbol,
-            type: 'ENTRY',
+            type: 'TRADE_EXECUTED',
             side: p.side,
             price: p.currentPrice,
             pnl: p.unrealizedPnl,
-            message: `Manually closed ${p.symbol} position. Final P&L: $${p.unrealizedPnl.toFixed(2)}.`,
+            message: `Manually closed ${p.symbol} (${p.side}) position. Final P&L: $${p.unrealizedPnl.toFixed(2)}.`,
           });
           // Execute real close on MEXC (remaining contracts)
           if (apiKey && secretKey) {
@@ -1088,7 +1873,23 @@ export default function Home() {
               executeMexcClose(p.symbol, p.side === 'LONG' ? 1 : 2, remaining);
             }
           }
-          return { ...p, status: 'CLOSED', closeReason: 'MANUAL' };
+          const totalRealizedPnl = (p.realizedPnl || 0) + p.unrealizedPnl;
+          const realizedPnlPct = p.equityUsed > 0 ? (totalRealizedPnl / p.equityUsed) * 100 : 0;
+          const estFee = p.fee || Number(((p.equityUsed * p.leverage) * 0.0008).toFixed(4));
+          const fundingFee = p.fundingFee || 0;
+          const netRealizedPnl = Number((totalRealizedPnl - estFee + fundingFee).toFixed(4));
+          return { 
+            ...p, 
+            status: 'CLOSED', 
+            closeReason: 'MANUAL',
+            exitPrice: p.currentPrice || p.entryPrice,
+            closedAt: Date.now(),
+            realizedPnl: totalRealizedPnl,
+            realizedPnlPct,
+            fee: estFee,
+            fundingFee,
+            netRealizedPnl,
+          };
         }
         return p;
       })
@@ -1110,7 +1911,23 @@ export default function Home() {
     setPositions((prev) =>
       prev.map((p) => {
         if (p.status === 'OPEN') {
-          return { ...p, status: 'CLOSED', closeReason: 'MANUAL' };
+          const totalRealizedPnl = (p.realizedPnl || 0) + p.unrealizedPnl;
+          const realizedPnlPct = p.equityUsed > 0 ? (totalRealizedPnl / p.equityUsed) * 100 : 0;
+          const estFee = p.fee || Number(((p.equityUsed * p.leverage) * 0.0008).toFixed(4));
+          const fundingFee = p.fundingFee || 0;
+          const netRealizedPnl = Number((totalRealizedPnl - estFee + fundingFee).toFixed(4));
+          return {
+            ...p,
+            status: 'CLOSED',
+            closeReason: 'MANUAL',
+            exitPrice: p.currentPrice || p.entryPrice,
+            closedAt: Date.now(),
+            realizedPnl: totalRealizedPnl,
+            realizedPnlPct,
+            fee: estFee,
+            fundingFee,
+            netRealizedPnl,
+          };
         }
         return p;
       })
@@ -1145,31 +1962,52 @@ export default function Home() {
     return await res.json();
   };
 
-  // Calculate live portfolio metrics from real trade data
+  // Calculate live portfolio metrics from real account balance
   const openPositionsCount = positions.filter((p) => p.status === 'OPEN').length;
   const marginUsed = positions
     .filter((p) => p.status === 'OPEN')
     .reduce((sum, p) => sum + p.equityUsed, 0);
 
   const closedPositions = positions.filter((p) => p.status === 'CLOSED');
-  const totalRealizedPnl = closedPositions.reduce((sum, p) => sum + p.realizedPnl, 0);
-  const totalUnrealizedPnl = positions
-    .filter((p) => p.status === 'OPEN')
-    .reduce((sum, p) => sum + p.unrealizedPnl, 0);
-  const computedTodayPnl = totalRealizedPnl + totalUnrealizedPnl;
-  const totalTrades = openPositionsCount;
-  const winningTrades = closedPositions.filter((p) => p.realizedPnl > 0);
-  const winRate = closedPositions.length > 0 ? (winningTrades.length / closedPositions.length) * 100 : 0;
-  const grossProfit = winningTrades.reduce((sum, p) => sum + p.realizedPnl, 0);
-  const grossLoss = Math.abs(closedPositions.filter((p) => p.realizedPnl < 0).reduce((sum, p) => sum + p.realizedPnl, 0));
+  const totalTrades = closedPositions.length;
+  const getNetPnl = (p: MexcPosition) => p.netRealizedPnl !== undefined ? p.netRealizedPnl : ((p.realizedPnl || 0) - (p.fee || 0) + (p.fundingFee || 0));
+  const winningTrades = closedPositions.filter((p) => getNetPnl(p) > 0);
+  const losingTrades = closedPositions.filter((p) => getNetPnl(p) < 0);
+  const winRate = totalTrades > 0 ? (winningTrades.length / totalTrades) * 100 : 0;
+  const grossProfit = winningTrades.reduce((sum, p) => sum + getNetPnl(p), 0);
+  const grossLoss = Math.abs(losingTrades.reduce((sum, p) => sum + getNetPnl(p), 0));
   const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 99 : 0;
-  const maxDrawdownPct = equity > 0 ? (Math.max(0, grossLoss) / equity) * 100 : 0;
+  const totalRealizedPnl = closedPositions.reduce((sum, p) => sum + getNetPnl(p), 0);
+
+  // P&L based on actual account balance vs starting balance, fallback to total realized P&L
+  const computedTodayPnl = (startingBalance !== null && startingBalance > 0 && Math.abs(equity - startingBalance) > 0.001)
+    ? equity - startingBalance
+    : totalRealizedPnl;
+  const computedTodayPnlPct = startingBalance !== null && startingBalance > 0 ? (computedTodayPnl / startingBalance) * 100 : 0;
+
+  const maxDrawdownPct = startingBalance !== null && startingBalance > 0 ? (Math.max(0, grossLoss) / startingBalance) * 100 : 0;
   const portfolioRiskPct = equity > 0 ? (marginUsed / equity) * 100 : 0;
-  const todayPnlPct = equity > 0 ? (computedTodayPnl / equity) * 100 : 0;
   const totalBotPnl = computedTodayPnl;
 
+  // Maintain real-time rolling P&L history for live chart
+  useEffect(() => {
+    setPnlHistory((prev) => {
+      const last = prev[prev.length - 1];
+      if (last !== undefined && Math.abs(last - computedTodayPnl) < 0.001) {
+        return prev;
+      }
+      const updated = [...prev, computedTodayPnl].slice(-40);
+      if (mounted) {
+        try {
+          localStorage.setItem('monorid_pnl_history', JSON.stringify(updated));
+        } catch {}
+      }
+      return updated;
+    });
+  }, [computedTodayPnl]);
+
   return (
-    <div className="min-h-screen bg-[#050811] text-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-[#050811] text-slate-100 flex flex-col font-sans" suppressHydrationWarning>
       {/* 1. Futuristic Header */}
       <Header
         activeTab={activeTab}
@@ -1180,7 +2018,9 @@ export default function Home() {
         isAutoTrading={isAutoTrading}
         setIsAutoTrading={setIsAutoTrading}
         equity={equity}
+        availableBalance={availableBalance}
         todayPnl={Number(computedTodayPnl.toFixed(2))}
+        todayPnlPct={Number(computedTodayPnlPct.toFixed(2))}
         openPositionsCount={openPositionsCount}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
         onEmergencyFlatten={handleEmergencyFlatten}
@@ -1190,6 +2030,86 @@ export default function Home() {
 
       {/* Main Content Area */}
       <main className="flex-1 p-3.5 sm:p-5 lg:p-6 max-w-7xl mx-auto w-full space-y-5">
+        {/* Diagnostic Status Banner - Shows why trades aren't executing */}
+        {activeTab === 'dashboard' && (
+          <div 
+            suppressHydrationWarning
+            className={`p-3 rounded-lg border ${!apiKey || !secretKey || equity <= 0 || (availableBalance !== null ? availableBalance : equity) < MIN_AVAILABLE_BALANCE_USDT || equity < MIN_AVAILABLE_BALANCE_USDT ? 'border-rose-500/50 bg-rose-950/20' : 'border-emerald-500/50 bg-emerald-950/20'} text-xs font-mono`}
+          >
+            <div className="flex items-center gap-4 flex-wrap">
+              <span className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${mounted && apiKey && secretKey ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
+                <span className="text-slate-400">API:</span>
+                <span className={mounted && apiKey && secretKey ? 'text-emerald-400' : 'text-rose-400'}>
+                  {mounted && apiKey && secretKey ? 'Connected' : 'Not Configured'}
+                </span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${mounted && equity > 0 ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
+                <span className="text-slate-400">Balance:</span>
+                <span className={mounted && equity > 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                  ${mounted ? equity.toFixed(2) : '0.00'}
+                </span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${mounted && (availableBalance !== null ? availableBalance : equity) >= MIN_AVAILABLE_BALANCE_USDT && equity >= MIN_AVAILABLE_BALANCE_USDT ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
+                <span className="text-slate-400">Available:</span>
+                <span className={mounted && (availableBalance !== null ? availableBalance : equity) >= MIN_AVAILABLE_BALANCE_USDT && equity >= MIN_AVAILABLE_BALANCE_USDT ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                  ${mounted ? (availableBalance !== null ? availableBalance : equity).toFixed(2) : '0.00'}
+                </span>
+              </span>
+              {mounted && ((availableBalance !== null ? availableBalance : equity) < MIN_AVAILABLE_BALANCE_USDT || equity < MIN_AVAILABLE_BALANCE_USDT) && (
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/50 text-[11px] font-bold animate-pulse">
+                  ⚠️ Balance &lt; $0.70 (Trades Blocked)
+                </span>
+              )}
+              <span className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${isAutoTrading ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
+                <span className="text-slate-400">Auto:</span>
+                <span className={isAutoTrading ? 'text-emerald-400' : 'text-amber-400'}>
+                  {isAutoTrading ? 'ON' : 'OFF'}
+                </span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${mounted && activeSignals.length > 0 ? 'bg-cyan-400' : 'bg-slate-600'}`}></span>
+                <span className="text-slate-400">Signals:</span>
+                <span className={mounted && activeSignals.length > 0 ? 'text-cyan-400' : 'text-slate-500'}>
+                  {mounted ? activeSignals.length : 0}
+                </span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <span className="text-slate-400">Confidence Rule:</span>
+                <span className="text-emerald-300 font-bold">
+                  &gt; 75% Only
+                </span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${mounted && lossCooldowns.size > 0 ? 'bg-amber-400' : 'bg-slate-600'}`}></span>
+                <span className="text-slate-400">Loss Cooldowns:</span>
+                <span className={mounted && lossCooldowns.size > 0 ? 'text-amber-300 font-bold' : 'text-slate-500'}>
+                  {mounted ? Array.from(lossCooldowns.values()).filter(t => t > Date.now()).length : 0} Active
+                </span>
+              </span>
+              {mounted && (!apiKey || !secretKey) && (
+                <span className="text-rose-400 font-bold ml-auto animate-pulse">
+                  ⚠ Click Settings to configure MEXC API keys
+                </span>
+              )}
+              {mounted && apiKey && secretKey && equity <= 0 && (
+                <span className="text-rose-400 font-bold ml-auto animate-pulse">
+                  ⚠ Fund your MEXC Futures account to enable trading
+                </span>
+              )}
+              {mounted && apiKey && secretKey && equity > 0 && activeSignals.length === 0 && (
+                <span className="text-cyan-400 ml-auto">
+                  ✓ System ready - Scanner searching for signals every 1 min
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* TAB 1: DASHBOARD (Cybernetic Hub matching user's reference image) */}
         {activeTab === 'dashboard' && (
           <div className="space-y-5">
@@ -1220,6 +2140,7 @@ export default function Home() {
                 <div className="flex-1">
                   <RiskOverviewCard
                     equity={equity}
+                    availableBalance={availableBalance}
                     marginUsed={marginUsed}
                     portfolioRiskPct={Number(portfolioRiskPct.toFixed(2))}
                     maxDrawdownPct={Number(maxDrawdownPct.toFixed(2))}
@@ -1229,10 +2150,12 @@ export default function Home() {
                 <div className="flex-1">
                   <PerformanceSummaryCard
                     todayPnl={Number(computedTodayPnl.toFixed(2))}
-                    todayPnlPct={Number(todayPnlPct.toFixed(2))}
+                    todayPnlPct={Number(computedTodayPnlPct.toFixed(2))}
                     winRate={Number(winRate.toFixed(1))}
                     profitFactor={Number(profitFactor.toFixed(2))}
                     totalTrades={totalTrades}
+                    closedPositions={closedPositions}
+                    pnlHistory={pnlHistory}
                   />
                 </div>
               </div>
@@ -1240,7 +2163,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* TAB 2: MARKET SCANNER (75 Contracts in 5 Groups of 15) */}
+        {/* TAB 2: MARKET SCANNER (90 Contracts in 6 Groups of 15) */}
         {activeTab === 'scanner' && (
           <MarketScanner
             tickers={tickers}
@@ -1248,6 +2171,8 @@ export default function Home() {
             onViewChart={handleOpenChart}
             onRefreshScan={() => runScanner()}
             isScanningBatch={isScanningBatch}
+            nonActivatedContracts={nonActivatedContracts}
+            lossCooldowns={lossCooldowns}
           />
         )}
 
@@ -1260,6 +2185,13 @@ export default function Home() {
             filterBotId={viewBotId}
             filterBotName={viewBotId ? bots.find((b) => b.id === viewBotId)?.name : undefined}
             onClearBotFilter={() => setViewBotId(null)}
+            onClearClosedPositions={() => {
+              setPositions((prev) => {
+                const openOnly = prev.filter((p) => p.status !== 'CLOSED');
+                positionsRef.current = openOnly;
+                return openOnly;
+              });
+            }}
           />
         )}
 
@@ -1267,7 +2199,10 @@ export default function Home() {
         {activeTab === 'logs' && (
           <TradeLogsView
             logs={logs}
-            onClearLogs={() => setLogs([])}
+            onClearLogs={() => {
+              setLogs([]);
+              localStorage.removeItem('monorid_logs');
+            }}
           />
         )}
       </main>
