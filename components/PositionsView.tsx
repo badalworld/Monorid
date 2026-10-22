@@ -13,6 +13,8 @@ import {
   Clock,
   TrendingUp,
   TrendingDown,
+  Download,
+  Server,
 } from 'lucide-react';
 import { MexcPosition } from '@/lib/mexc';
 
@@ -64,6 +66,16 @@ export function PositionsView({
   }).length;
   const winRate = closedPositions.length > 0 ? (winCount / closedPositions.length) * 100 : 0;
 
+  const exportClosedTrades = () => {
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(closedPositions, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('download', `monorid-trade-history-${Date.now()}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  };
+
   return (
     <div className="space-y-5">
       {/* Header Banner */}
@@ -104,6 +116,16 @@ export function PositionsView({
               {filterBotId ? `${openPositions.length} OPEN` : `${openPositions.length} ACTIVE`}
             </span>
           </div>
+          {closedPositions.length > 0 && (
+            <button
+              onClick={exportClosedTrades}
+              className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-750 text-slate-300 text-xs font-mono font-semibold hover:bg-slate-800 transition-colors flex items-center gap-1.5 cursor-pointer"
+              title="Download full closed trade history as JSON"
+            >
+              <Download className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Export History</span>
+            </button>
+          )}
           {onClearClosedPositions && closedPositions.length > 0 && (
             <button
               onClick={onClearClosedPositions}
@@ -137,7 +159,7 @@ export function PositionsView({
                   No Active Trades for {cleanBotName || 'This Bot'} Currently
                 </p>
                 <p className="text-xs text-slate-500 mt-1">
-                  Monitoring 90 contracts on 1-minute candles for Market Cipher B signals (Green Dot &gt; EMA 200 or Red Dot &lt; EMA 200). Trades execute automatically with 1:2 TP.
+                  Monitoring 90 contracts on 1-minute candles for Monorid signals (Green Dot &gt; EMA 200 or Red Dot &lt; EMA 200). Trades execute automatically with 1:2 TP.
                 </p>
               </>
             )}
@@ -288,6 +310,11 @@ export function PositionsView({
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 font-bold border border-emerald-800">
               WIN RATE: {winRate.toFixed(1)}%
             </span>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950/80 text-cyan-300 font-semibold border border-cyan-800 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              <Server className="w-2.5 h-2.5 text-cyan-400" />
+              SERVER STORAGE: PERSISTENT
+            </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-xs font-mono">
@@ -323,7 +350,7 @@ export function PositionsView({
             <Clock className="w-8 h-8 text-slate-700 mx-auto mb-2" />
             <p className="text-slate-400 font-semibold">No closed trades recorded yet</p>
             <p className="text-[11px] text-slate-600 mt-1">
-              Completed executions from Market Cipher B 1:2 Take Profit targets, EMA 200 Stop Loss triggers, and exchange order history will appear here.
+              Completed executions from Monorid 1:2 Take Profit targets, EMA 200 Stop Loss triggers, and exchange order history will appear here.
             </p>
           </div>
         ) : (

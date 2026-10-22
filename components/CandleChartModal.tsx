@@ -22,7 +22,7 @@ const PRICE_TOP = PADDING.top;
 const PRICE_HEIGHT = 220;
 const PRICE_BOTTOM = PRICE_TOP + PRICE_HEIGHT;
 
-// Market Cipher B Sub-Pane coordinates
+// Monorid Oscillator Sub-Pane coordinates
 const SUB_PANE_LABEL_Y = 258;
 const CIPHER_TOP = 272;
 const CIPHER_HEIGHT = 138;
@@ -221,7 +221,7 @@ export function CandleChartModal({
     const sY = analysis?.slLevel ? priceToY(analysis.slLevel) : undefined;
     const tY = targetTp ? priceToY(targetTp) : undefined;
 
-    // Market Cipher B Sub-Pane Paths (WT1 and WT2)
+    // Monorid Sub-Pane Paths (WT1 and WT2)
     let wt1Path = '';
     let wt1Area = '';
     let wt2Path = '';
@@ -243,7 +243,7 @@ export function CandleChartModal({
         wt1Area += ` L ${x.toFixed(1)} ${y1.toFixed(1)}`;
         wt2Path += ` L ${x.toFixed(1)} ${y2.toFixed(1)}`;
 
-        // Check crossover dots matching LazyBear Market Cipher B Free rules
+        // Check crossover dots matching Monorid Quant rules
         const prevW1 = wt1Series[i - 1] ?? 0;
         const prevW2 = wt2Series[i - 1] ?? 0;
 
@@ -350,7 +350,7 @@ export function CandleChartModal({
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 font-mono mt-0.5">
-                1M High-Precision Scalp Chart • LazyBear Market Cipher B + EMA 200 Trend Strategy Engine
+                1M High-Precision Scalp Chart • Monorid Algorithm + EMA 200 Trend Strategy Engine • Copyright and developed by Trading Lifestyle Quant
               </p>
             </div>
           </div>
@@ -366,7 +366,7 @@ export function CandleChartModal({
         {/* Quant Telemetry Banner with Real-time & Crosshair Indicator Positions */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 my-3 p-3 rounded-xl bg-slate-950/90 border border-slate-800 text-xs font-mono">
           <div className="p-2 rounded-lg bg-slate-900/60 border border-slate-800/80">
-            <span className="text-[10px] text-slate-400 block uppercase font-medium">Market Cipher B</span>
+            <span className="text-[10px] text-slate-400 block uppercase font-medium">Monorid Oscillator</span>
             <div className="flex items-center gap-2 mt-0.5">
               <span className={`font-bold ${activeWT1 <= -53 ? 'text-emerald-400' : activeWT1 >= 53 ? 'text-rose-400' : 'text-cyan-300'}`}>
                 WT1: {activeWT1}
@@ -377,7 +377,7 @@ export function CandleChartModal({
           </div>
 
           <div className="p-2 rounded-lg bg-slate-900/60 border border-slate-800/80">
-            <span className="text-[10px] text-slate-400 block uppercase font-medium">Cipher Dot Status</span>
+            <span className="text-[10px] text-slate-400 block uppercase font-medium">Monorid Dot Status</span>
             <div className="mt-0.5">
               <span className={`font-bold inline-flex items-center gap-1 ${
                 activeDotLabel.includes('GREEN')
@@ -437,12 +437,12 @@ export function CandleChartModal({
           </div>
         )}
 
-        {/* Visual Dual-Pane SVG Canvas: Price Candlesticks + EMA 200 Overlay + Market Cipher B Sub-Pane */}
+        {/* Visual Dual-Pane SVG Canvas: Price Candlesticks + EMA 200 Overlay + Monorid Sub-Pane */}
         <div className="relative w-full h-[400px] sm:h-[430px] bg-[#040711] rounded-xl border border-slate-800/90 overflow-hidden shadow-inner select-none">
           {visibleCandles.length === 0 ? (
             <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-slate-400 font-mono text-xs">
               <Radio className="w-6 h-6 text-cyan-400 animate-pulse" />
-              <span>Fetching 1M candlestick stream and computing Market Cipher B & EMA 200 indicators...</span>
+              <span>Fetching 1M candlestick stream and computing Monorid & EMA 200 indicators...</span>
             </div>
           ) : (
             <svg
@@ -680,10 +680,10 @@ export function CandleChartModal({
                 fontFamily="monospace"
                 fontWeight="bold"
               >
-                MARKET CIPHER B (WT1 / WT2 OSCILLATOR)
+                MONORID OSCILLATOR (WT1 / WT2)
               </text>
 
-              {/* ── SUB-PANE: MARKET CIPHER B OSCILLATOR (LazyBear Cipher_B_free) ── */}
+              {/* ── SUB-PANE: MONORID OSCILLATOR (Copyright and developed by Trading Lifestyle Quant) ── */}
               {/* Zero Center Line */}
               <line
                 x1={PADDING.left}
@@ -809,7 +809,7 @@ export function CandleChartModal({
                 />
               )}
 
-              {/* Crossover Dots (Green in OS / Red in OB) Matching LazyBear Design */}
+              {/* Crossover Dots (Green in OS / Red in OB) Matching Monorid Design */}
               {crossoverDots.map((dot, idx) => (
                 <g key={`dot-${idx}`}>
                   {/* Glow ring */}
@@ -916,7 +916,7 @@ export function CandleChartModal({
           <div className="flex items-center gap-2 text-xs font-mono ml-auto">
             <span className="px-3 py-1 rounded-lg bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 font-bold flex items-center gap-1.5">
               <Zap className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
-              <span>MARKET CIPHER B 1:2 ENGINE</span>
+              <span>MONORID 1:2 ENGINE</span>
             </span>
           </div>
         </div>

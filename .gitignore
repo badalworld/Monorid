@@ -17,3 +17,7 @@ npm-out*.txt
 *.json.dump
 history_orders_dump.json
 all_historical_orders.json
+deploy_payload.json
+scratch_payload.json
+service_types.json
+

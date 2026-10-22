@@ -1,8 +1,7 @@
 /**
  * MONORID ALGORITHMIC TRADING CORE
- * Developed by Trading Lifestyle Quant
- * Strategy: Market Cipher B Free Version with EMA-200 Trend Filter
- * Based on Pine Script by @TradingView (Market Cipher B Free version with Buy and sell)
+ * Copyright and developed by Trading Lifestyle Quant
+ * Strategy: Monorid Quant Scalp Strategy with EMA-200 Trend Filter
  * 
  * Rules:
  * - LONG: Indicator in oversold zone (<= -53) prints Green Dot (wt1 crosses above wt2)
@@ -402,28 +401,28 @@ export function analyzeMarketCipherBStrategy(
   let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
   let signalType: 'CIPHER_B_GREEN_DOT' | 'CIPHER_B_RED_DOT' | 'SMA_CROSS' | 'REVERSAL' | 'NONE' = 'NONE';
   let eliminatedReason: string | undefined;
-  let message = 'Market Cipher B: Inactive / Neutral. Strictly waiting for Green Dot in OS (> EMA 200) or Red Dot in OB (< EMA 200)';
+  let message = 'Monorid: Inactive / Neutral. Strictly waiting for Green Dot in OS (> EMA 200) or Red Dot in OB (< EMA 200)';
 
   if (buySignal) {
     action = 'BUY';
     signalType = 'CIPHER_B_GREEN_DOT';
-    message = `Market Cipher B: GREEN DOT in Oversold Zone (wt1: ${wt1Current.toFixed(1)}, wt2: ${wt2Current.toFixed(1)}) & Price ABOVE EMA 200 ($${currentPrice.toFixed(4)} > $${currentEMA.toFixed(4)})`;
+    message = `Monorid: GREEN DOT in Oversold Zone (wt1: ${wt1Current.toFixed(1)}, wt2: ${wt2Current.toFixed(1)}) & Price ABOVE EMA 200 ($${currentPrice.toFixed(4)} > $${currentEMA.toFixed(4)})`;
   } else if (sellSignal) {
     action = 'SELL';
     signalType = 'CIPHER_B_RED_DOT';
-    message = `Market Cipher B: RED DOT in Overbought Zone (wt1: ${wt1Current.toFixed(1)}, wt2: ${wt2Current.toFixed(1)}) & Price BELOW EMA 200 ($${currentPrice.toFixed(4)} < $${currentEMA.toFixed(4)})`;
+    message = `Monorid: RED DOT in Overbought Zone (wt1: ${wt1Current.toFixed(1)}, wt2: ${wt2Current.toFixed(1)}) & Price BELOW EMA 200 ($${currentPrice.toFixed(4)} < $${currentEMA.toFixed(4)})`;
   } else if (hasGreenDot && !isMarketAboveEMA) {
     eliminatedReason = `Counter-trend: Price below EMA 200 for Long ($${currentPrice.toFixed(4)} <= $${currentEMA.toFixed(4)})`;
-    message = `Market Cipher B: Long rejected — ${eliminatedReason}`;
+    message = `Monorid: Long rejected — ${eliminatedReason}`;
   } else if (hasRedDot && !isMarketBelowEMA) {
     eliminatedReason = `Counter-trend: Price above EMA 200 for Short ($${currentPrice.toFixed(4)} >= $${currentEMA.toFixed(4)})`;
-    message = `Market Cipher B: Short rejected — ${eliminatedReason}`;
+    message = `Monorid: Short rejected — ${eliminatedReason}`;
   } else if ((sameCandleBullCross || completedCandleBullCross) && !isOversoldSame && !isOversoldCompleted) {
     eliminatedReason = `Signal outside Oversold zone (WT1: ${wt1Current.toFixed(1)}, WT2: ${wt2Current.toFixed(1)} > ${osLevel2})`;
-    message = `Market Cipher B: Bullish crossover rejected — ${eliminatedReason}`;
+    message = `Monorid: Bullish crossover rejected — ${eliminatedReason}`;
   } else if ((sameCandleBearCross || completedCandleBearCross) && !isOverboughtSame && !isOverboughtCompleted) {
     eliminatedReason = `Signal outside Overbought zone (WT1: ${wt1Current.toFixed(1)}, WT2: ${wt2Current.toFixed(1)} < ${obLevel2})`;
-    message = `Market Cipher B: Bearish crossover rejected — ${eliminatedReason}`;
+    message = `Monorid: Bearish crossover rejected — ${eliminatedReason}`;
   }
 
   // ── Risk Management: Stop Loss strictly below/above EMA 200, Take Profit strictly 1:2 R:R ──
@@ -454,7 +453,7 @@ export function analyzeMarketCipherBStrategy(
       signalType = 'NONE';
       candleTiming = 'NONE';
       eliminatedReason = `Negative risk calculation: Stop Loss ($${slLevel.toFixed(4)}) is below zero`;
-      message = `Market Cipher B: Long trade skipped — ${eliminatedReason}.`;
+      message = `Monorid: Long trade skipped — ${eliminatedReason}.`;
       slLevel = undefined;
       tpLevel = undefined;
       tp1Level = undefined;
@@ -479,7 +478,7 @@ export function analyzeMarketCipherBStrategy(
       signalType = 'NONE';
       candleTiming = 'NONE';
       eliminatedReason = `Negative TP risk calculation: 1:2 TP target ($${tpLevel.toFixed(4)}) is mathematically below zero due to extreme EMA distance`;
-      message = `Market Cipher B: Short trade skipped — ${eliminatedReason}.`;
+      message = `Monorid: Short trade skipped — ${eliminatedReason}.`;
       slLevel = undefined;
       tpLevel = undefined;
       tp1Level = undefined;
@@ -550,7 +549,11 @@ export function analyzeMarketCipherBStrategy(
   };
 }
 
-// Backward compatibility alias: analyzeCrudeOilStrategy now delegates directly to Market Cipher B strategy
+// Official Monorid Quant Engine exports
+export const calculateMonoridIndicator = calculateMarketCipherB;
+export const analyzeMonoridStrategy = analyzeMarketCipherBStrategy;
+
+// Backward compatibility alias: analyzeCrudeOilStrategy now delegates directly to Monorid strategy
 export const analyzeCrudeOilStrategy = analyzeMarketCipherBStrategy;
 
 /**

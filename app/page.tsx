@@ -103,6 +103,57 @@ export default function Home() {
         setLossCooldowns(map);
         lossCooldownsRef.current = map;
       }
+
+      // Asynchronously fetch and hydrate persistent trade history and logs from the online server
+      (async () => {
+        try {
+          const [tradesRes, logsRes] = await Promise.all([
+            fetch('/api/storage/trades').catch(() => null),
+            fetch('/api/storage/logs').catch(() => null),
+          ]);
+
+          let serverTrades: MexcPosition[] = [];
+          if (tradesRes && tradesRes.ok) {
+            const tradesData = await tradesRes.json().catch(() => null);
+            if (tradesData && tradesData.success && Array.isArray(tradesData.trades)) {
+              serverTrades = tradesData.trades;
+            }
+          }
+
+          if (serverTrades.length > 0) {
+            setPositions((prev) => {
+              const merged = deduplicateClosedPositions([...prev, ...serverTrades]);
+              positionsRef.current = merged;
+              return merged;
+            });
+          }
+
+          let serverLogs: TradeLog[] = [];
+          if (logsRes && logsRes.ok) {
+            const logsData = await logsRes.json().catch(() => null);
+            if (logsData && logsData.success && Array.isArray(logsData.logs)) {
+              serverLogs = logsData.logs;
+            }
+          }
+
+          if (serverLogs.length > 0) {
+            setLogs((prev) => {
+              const seenIds = new Set<string>();
+              const merged: TradeLog[] = [];
+              for (const l of [...prev, ...serverLogs]) {
+                if (l && l.id && !seenIds.has(l.id)) {
+                  seenIds.add(l.id);
+                  merged.push(l);
+                }
+              }
+              merged.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+              return merged.slice(0, 1000);
+            });
+          }
+        } catch (serverErr) {
+          console.warn('[Storage] Failed to hydrate from server persistence:', serverErr);
+        }
+      })();
     } catch (err) {
       console.warn('Failed to hydrate state from localStorage:', err);
     }
@@ -199,7 +250,7 @@ export default function Home() {
       if (savedConfig) {
         try {
           const parsed = JSON.parse(savedConfig);
-          // Auto-migrate legacy strategy parameters to Market Cipher B defaults
+          // Auto-migrate legacy strategy parameters to Monorid defaults
           if (!parsed.channelLength) parsed.channelLength = DEFAULT_CONFIG.channelLength;
           if (!parsed.averageLength) parsed.averageLength = DEFAULT_CONFIG.averageLength;
           if (parsed.obLevel2 === undefined) parsed.obLevel2 = DEFAULT_CONFIG.obLevel2;
@@ -327,15 +378,82 @@ export default function Home() {
     console.log('[Equity] Current balance:', equity, 'API keys set:', !!apiKey && !!secretKey);
   }, [equity, apiKey, secretKey]);
 
-  // Helper to add trade logs
+  // Continuous server-side trade history persistence helper
+  const persistTradesToServer = useCallback(async (
+    target: MexcPosition[] | MexcPosition,
+    action: 'append' | 'sync' | 'save' = 'sync'
+  ) => {
+    try {
+      const payload = Array.isArray(target) ? { action, trades: target } : { action: 'append', trade: target };
+      await fetch('/api/storage/trades', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      console.warn('[Storage] Failed to persist trades to server:', err);
+    }
+  }, []);
+
+  // Pending log buffer for continuous asynchronous server-side persistence
+  const pendingLogsRef = useRef<TradeLog[]>([]);
+  const isFlushingLogsRef = useRef<boolean>(false);
+
+  const flushLogsToServer = useCallback(async () => {
+    if (isFlushingLogsRef.current || pendingLogsRef.current.length === 0) return;
+    isFlushingLogsRef.current = true;
+    const batch = [...pendingLogsRef.current];
+    pendingLogsRef.current = [];
+
+    try {
+      await fetch('/api/storage/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'append', logs: batch }),
+      });
+    } catch (err) {
+      console.warn('[Storage] Failed to flush logs to server, requeueing:', err);
+      pendingLogsRef.current = [...batch, ...pendingLogsRef.current];
+    } finally {
+      isFlushingLogsRef.current = false;
+    }
+  }, []);
+
+  // Periodic flush every 1000ms
+  useEffect(() => {
+    const timer = setInterval(() => {
+      flushLogsToServer();
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [flushLogsToServer]);
+
+  // Flush remaining logs on window beforeunload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (pendingLogsRef.current.length > 0) {
+        const payload = JSON.stringify({ action: 'append', logs: pendingLogsRef.current });
+        if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+          navigator.sendBeacon('/api/storage/logs', new Blob([payload], { type: 'application/json' }));
+        }
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
+
+  // Helper to add trade logs (immediately updates UI & enqueues to server storage)
   const addLog = useCallback((entry: Omit<TradeLog, 'id' | 'timestamp'>) => {
     const newLog: TradeLog = {
       ...entry,
       id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       timestamp: Date.now(),
     };
-    setLogs((prev) => [newLog, ...prev.slice(0, 499)]);
-  }, []);
+    setLogs((prev) => [newLog, ...prev.slice(0, 999)]);
+    pendingLogsRef.current.push(newLog);
+    if (pendingLogsRef.current.length >= 10) {
+      flushLogsToServer();
+    }
+  }, [flushLogsToServer]);
 
   // Track logged opportunities & eliminated reasons to prevent log spamming every 30s
   const loggedOpportunitiesRef = useRef<Set<string>>(new Set());
@@ -419,7 +537,7 @@ export default function Home() {
     }
   }, []);
 
-  // 3. Scan top volatile symbols for Market Cipher B signals (Green Dot > EMA 200 / Red Dot < EMA 200)
+  // 3. Scan top volatile symbols for Monorid signals (Green Dot > EMA 200 / Red Dot < EMA 200)
   const runScanner = useCallback(async (currentTickers?: MexcTicker[]) => {
     setIsScanningBatch(true);
     
@@ -868,6 +986,7 @@ export default function Home() {
                 executeMexcClose(p.symbol, isLong ? 1 : 2, p.contractVol);
               }
               updatedPos.closedVol = p.contractVol;
+              persistTradesToServer(updatedPos, 'append');
             }
 
             const reachedSl = isLong
@@ -916,6 +1035,7 @@ export default function Home() {
                 if (remaining >= 1) executeMexcClose(p.symbol, isLong ? 1 : 2, remaining);
               }
               updatedPos.closedVol = p.contractVol;
+              persistTradesToServer(updatedPos, 'append');
             }
 
             return updatedPos;
@@ -929,7 +1049,7 @@ export default function Home() {
     return () => {
       unsubscribers.forEach((unsub) => unsub());
     };
-  }, [openSymbolsKey, config, apiKey, secretKey, addLog, sendTelegramAlert]);
+  }, [openSymbolsKey, config, apiKey, secretKey, addLog, sendTelegramAlert, persistTradesToServer]);
 
   // Automated Trade Execution Pipeline - Executes trades when candles close (every 1 minute)
   const autoExecuteConfirmedTrade = useCallback(async (
@@ -1740,6 +1860,10 @@ export default function Home() {
           const next = [...kept, ...seeded, ...deduplicatedClosed];
           positionsRef.current = next;
 
+          if (deduplicatedClosed.length > 0) {
+            persistTradesToServer(deduplicatedClosed, 'sync');
+          }
+
           if (fallbackClosed.length > 0) {
             for (const pos of fallbackClosed) {
               const isTp = pos.closeReason === 'TP1' && (pos.realizedPnl !== undefined && pos.realizedPnl > 0.0001);
@@ -1878,10 +2002,10 @@ export default function Home() {
           const estFee = p.fee || Number(((p.equityUsed * p.leverage) * 0.0008).toFixed(4));
           const fundingFee = p.fundingFee || 0;
           const netRealizedPnl = Number((totalRealizedPnl - estFee + fundingFee).toFixed(4));
-          return { 
+          const closedPos = { 
             ...p, 
-            status: 'CLOSED', 
-            closeReason: 'MANUAL',
+            status: 'CLOSED' as const, 
+            closeReason: 'MANUAL' as const,
             exitPrice: p.currentPrice || p.entryPrice,
             closedAt: Date.now(),
             realizedPnl: totalRealizedPnl,
@@ -1890,6 +2014,8 @@ export default function Home() {
             fundingFee,
             netRealizedPnl,
           };
+          persistTradesToServer(closedPos, 'append');
+          return closedPos;
         }
         return p;
       })
@@ -1908,6 +2034,7 @@ export default function Home() {
           }
         });
     }
+    const flattened: MexcPosition[] = [];
     setPositions((prev) =>
       prev.map((p) => {
         if (p.status === 'OPEN') {
@@ -1916,10 +2043,10 @@ export default function Home() {
           const estFee = p.fee || Number(((p.equityUsed * p.leverage) * 0.0008).toFixed(4));
           const fundingFee = p.fundingFee || 0;
           const netRealizedPnl = Number((totalRealizedPnl - estFee + fundingFee).toFixed(4));
-          return {
+          const closed = {
             ...p,
-            status: 'CLOSED',
-            closeReason: 'MANUAL',
+            status: 'CLOSED' as const,
+            closeReason: 'MANUAL' as const,
             exitPrice: p.currentPrice || p.entryPrice,
             closedAt: Date.now(),
             realizedPnl: totalRealizedPnl,
@@ -1928,10 +2055,15 @@ export default function Home() {
             fundingFee,
             netRealizedPnl,
           };
+          flattened.push(closed);
+          return closed;
         }
         return p;
       })
     );
+    if (flattened.length > 0) {
+      persistTradesToServer(flattened, 'append');
+    }
     addLog({
       groupName: 'ALL GROUPS',
       symbol: 'PANIC_FLATTEN',
@@ -2185,12 +2317,18 @@ export default function Home() {
             filterBotId={viewBotId}
             filterBotName={viewBotId ? bots.find((b) => b.id === viewBotId)?.name : undefined}
             onClearBotFilter={() => setViewBotId(null)}
-            onClearClosedPositions={() => {
+            onClearClosedPositions={async () => {
               setPositions((prev) => {
                 const openOnly = prev.filter((p) => p.status !== 'CLOSED');
                 positionsRef.current = openOnly;
                 return openOnly;
               });
+              try {
+                localStorage.setItem('monorid_positions', JSON.stringify(positionsRef.current.filter((p) => p.status !== 'CLOSED')));
+                await fetch('/api/storage/trades', { method: 'DELETE' });
+              } catch (err) {
+                console.warn('[Storage] Failed to clear server trades:', err);
+              }
             }}
           />
         )}
@@ -2199,9 +2337,15 @@ export default function Home() {
         {activeTab === 'logs' && (
           <TradeLogsView
             logs={logs}
-            onClearLogs={() => {
+            onClearLogs={async () => {
               setLogs([]);
-              localStorage.removeItem('monorid_logs');
+              pendingLogsRef.current = [];
+              try {
+                localStorage.removeItem('monorid_logs');
+                await fetch('/api/storage/logs', { method: 'DELETE' });
+              } catch (err) {
+                console.warn('[Storage] Failed to clear server logs:', err);
+              }
             }}
           />
         )}

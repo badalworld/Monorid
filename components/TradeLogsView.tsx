@@ -18,6 +18,7 @@ import {
   XCircle,
   Activity,
   Layers,
+  Server,
 } from 'lucide-react';
 import { TradeLog, ASSET_GROUPS, TradeLogType } from '@/lib/mexc';
 
@@ -127,6 +128,11 @@ export function TradeLogsView({ logs, onClearLogs }: TradeLogsViewProps) {
               </h2>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-700/60 font-semibold">
                 {logs.length} REGISTERED EVENTS ({filteredLogs.length} DISPLAYED)
+              </span>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950/80 text-cyan-300 font-semibold border border-cyan-800 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <Server className="w-2.5 h-2.5 text-cyan-400" />
+                SERVER STORAGE: PERSISTENT
               </span>
             </div>
             <p className="text-xs text-slate-400 font-mono mt-0.5">

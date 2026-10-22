@@ -295,7 +295,7 @@ export function SettingsModal({
               <div className="flex items-center gap-2">
                 <Shield className="w-4 h-4 text-cyan-400" />
                 <h3 className="text-xs font-mono font-bold text-slate-200 uppercase tracking-wider">
-                  Market Cipher B Free Strategy & Risk Parameters
+                  Monorid Strategy & Risk Parameters
                 </h3>
               </div>
               <button
@@ -422,7 +422,7 @@ export function SettingsModal({
               <div>
                 <label className="text-[10px] text-slate-400 block mb-1">Execution Rule</label>
                 <div className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-emerald-400 font-bold text-[11px] truncate">
-                  STRICT CIPHER B ONLY
+                  STRICT MONORID ONLY
                 </div>
               </div>
             </div>
@@ -430,7 +430,7 @@ export function SettingsModal({
             <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-xs font-mono text-slate-400">
               <span>Strategy Engine:</span>
               <span className="text-cyan-300 font-bold">
-                Market Cipher B Free (10, 21, OB 53, OS -53) • EMA 200 Trend Filter • 1:2 R:R (100% Exit)
+                Monorid Algorithm (10, 21, OB 53, OS -53) • EMA 200 Trend Filter • 1:2 R:R (100% Exit) • Copyright and developed by Trading Lifestyle Quant
               </span>
             </div>
           </div>

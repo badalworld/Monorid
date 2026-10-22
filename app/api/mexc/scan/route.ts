@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchMexcKlines, fetchMexcFuturesTickers } from '@/lib/mexc';
-import { analyzeMarketCipherBStrategy, DEFAULT_CONFIG, StrategyConfig } from '@/lib/strategy';
+import { analyzeMonoridStrategy, DEFAULT_CONFIG, StrategyConfig } from '@/lib/strategy';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
             error: `Insufficient candle data for ${symbol} (${klines.length} bars)`,
           };
         }
-        const analysis = analyzeMarketCipherBStrategy(klines, config);
+        const analysis = analyzeMonoridStrategy(klines, config);
         return {
           symbol,
           success: true,

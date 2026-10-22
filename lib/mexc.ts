@@ -113,14 +113,14 @@ export interface BotDefinition {
 export const MAX_OPEN_POSITIONS = 999; // Unlimited positions
 
 export const OFFICIAL_BOT_UNITS: BotDefinition[] = [
-  { id: 'apex-momentum', code: 'APEX MOMENTUM', name: 'Apex Momentum', strategy: 'MARKET CIPHER B', assignedGroup: 'Apex Cyber-Volatiles', pnl: 0, status: 'ACTIVE', tradesCount: 0 },
-  { id: 'mean-reversion', code: 'MEAN REVERSION', name: 'Mean Reversion', strategy: 'MARKET CIPHER B', assignedGroup: 'Titan Momentum Core', pnl: 0, status: 'ACTIVE', tradesCount: 0 },
-  { id: 'breakout-hunter', code: 'BREAKOUT HUNTER', name: 'Breakout Hunter', strategy: 'MARKET CIPHER B', assignedGroup: 'Quantum Velocity', pnl: 0, status: 'ACTIVE', tradesCount: 0 },
-  { id: 'rapid-scalper', code: 'RAPID SCALPER', name: 'Rapid Scalper', strategy: 'MARKET CIPHER B', assignedGroup: 'Alpha Rapid-Scalp', pnl: 0, status: 'ACTIVE', tradesCount: 0 },
-  { id: 'swing-raider', code: 'SWING RAIDER', name: 'Swing Raider', strategy: 'MARKET CIPHER B', assignedGroup: 'DeFi & Layer-1 Vanguard', pnl: 0, status: 'ACTIVE', tradesCount: 0 },
-  { id: 'volatility-reaper', code: 'VOLATILITY REAPER', name: 'Volatility Reaper', strategy: 'MARKET CIPHER B', assignedGroup: 'AI & Cyber Innovators', pnl: 0, status: 'ACTIVE', tradesCount: 0 },
-  { id: 'liquidity-sweeper', code: 'LIQUIDITY SWEEPER', name: 'Liquidity Sweeper', strategy: 'MARKET CIPHER B', assignedGroup: 'Quantum Velocity', pnl: 0, status: 'ACTIVE', tradesCount: 0 },
-  { id: 'order-flow-reaper', code: 'ORDER FLOW REAPER', name: 'Order Flow Reaper', strategy: 'MARKET CIPHER B', assignedGroup: 'Alpha Rapid-Scalp', pnl: 0, status: 'ACTIVE', tradesCount: 0 },
+  { id: 'apex-momentum', code: 'APEX MOMENTUM', name: 'Apex Momentum', strategy: 'MONORID QUANT', assignedGroup: 'Apex Cyber-Volatiles', pnl: 0, status: 'ACTIVE', tradesCount: 0 },
+  { id: 'mean-reversion', code: 'MEAN REVERSION', name: 'Mean Reversion', strategy: 'MONORID QUANT', assignedGroup: 'Titan Momentum Core', pnl: 0, status: 'ACTIVE', tradesCount: 0 },
+  { id: 'breakout-hunter', code: 'BREAKOUT HUNTER', name: 'Breakout Hunter', strategy: 'MONORID QUANT', assignedGroup: 'Quantum Velocity', pnl: 0, status: 'ACTIVE', tradesCount: 0 },
+  { id: 'rapid-scalper', code: 'RAPID SCALPER', name: 'Rapid Scalper', strategy: 'MONORID QUANT', assignedGroup: 'Alpha Rapid-Scalp', pnl: 0, status: 'ACTIVE', tradesCount: 0 },
+  { id: 'swing-raider', code: 'SWING RAIDER', name: 'Swing Raider', strategy: 'MONORID QUANT', assignedGroup: 'DeFi & Layer-1 Vanguard', pnl: 0, status: 'ACTIVE', tradesCount: 0 },
+  { id: 'volatility-reaper', code: 'VOLATILITY REAPER', name: 'Volatility Reaper', strategy: 'MONORID QUANT', assignedGroup: 'AI & Cyber Innovators', pnl: 0, status: 'ACTIVE', tradesCount: 0 },
+  { id: 'liquidity-sweeper', code: 'LIQUIDITY SWEEPER', name: 'Liquidity Sweeper', strategy: 'MONORID QUANT', assignedGroup: 'Quantum Velocity', pnl: 0, status: 'ACTIVE', tradesCount: 0 },
+  { id: 'order-flow-reaper', code: 'ORDER FLOW REAPER', name: 'Order Flow Reaper', strategy: 'MONORID QUANT', assignedGroup: 'Alpha Rapid-Scalp', pnl: 0, status: 'ACTIVE', tradesCount: 0 },
 ];
 
 export interface MexcPosition {
@@ -587,7 +587,7 @@ export const ASSET_GROUPS = [
   { name: 'Titan Momentum Core', description: 'High-liquidity large cap breakout assets with elevated volume velocity' },
   { name: 'Quantum Velocity', description: 'High-beta momentum contracts with wide intraday ranges' },
   { name: 'DeFi & Layer-1 Vanguard', description: 'Fast-moving decentralized ecosystem and infrastructure runners' },
-  { name: 'Alpha Rapid-Scalp', description: 'High-turnover volatile contracts ideal for 1-minute Market Cipher B signals' },
+  { name: 'Alpha Rapid-Scalp', description: 'High-turnover volatile contracts ideal for 1-minute Monorid signals' },
   { name: 'AI & Cyber Innovators', description: 'Emerging artificial intelligence, web3, and high-velocity innovation runners' },
 ];
 

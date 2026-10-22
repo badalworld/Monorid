@@ -195,14 +195,14 @@ export function MarketScanner({
               {/* Strategy Engine Telemetry */}
               <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-850 space-y-1.5 text-[11px] font-mono">
                 <div className="flex justify-between items-center text-slate-300">
-                  <span className="text-slate-400">Cipher B (WT1 / WT2):</span>
+                  <span className="text-slate-400">Monorid (WT1 / WT2):</span>
                   <span className="font-semibold text-cyan-300">
                     {analysis?.wt1 !== undefined ? `${analysis.wt1.toFixed(1)} / ${analysis.wt2.toFixed(1)}` : '—'}
                   </span>
                 </div>
 
                 <div className="flex justify-between items-center text-slate-300">
-                  <span className="text-slate-400">Cipher B Dot:</span>
+                  <span className="text-slate-400">Monorid Dot:</span>
                   <span className={`font-bold px-1.5 py-0.2 rounded text-[10px] ${
                     analysis?.cipherDot === 'GREEN'
                       ? 'bg-emerald-950 border border-emerald-500 text-emerald-300 animate-pulse'

@@ -30,8 +30,8 @@ export async function POST(req: NextRequest) {
       const isLong = side === 'LONG';
       const isSameCandle = details?.candleTiming === 'SAME_CANDLE' || body.candleTiming === 'SAME_CANDLE';
       const icon = isLong
-        ? `🟢 <b>[MARKET CIPHER B BUY CONFIRMED${isSameCandle ? ' • GREEN DOT' : ''}]</b>`
-        : `🔴 <b>[MARKET CIPHER B SELL CONFIRMED${isSameCandle ? ' • RED DOT' : ''}]</b>`;
+        ? `🟢 <b>[MONORID BUY CONFIRMED${isSameCandle ? ' • GREEN DOT' : ''}]</b>`
+        : `🔴 <b>[MONORID SELL CONFIRMED${isSameCandle ? ' • RED DOT' : ''}]</b>`;
       message = `${icon}\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
         `• <b>Bot:</b> Monorid Quant Core\n` +
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
         `   🛑 Stop Loss (EMA 200): $${sl}\n` +
         `   🎯 Take Profit (1:2 Target • 100%): $${tp1}\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
-        `<i>Market Cipher B Quant Engine</i>`;
+        `<i>Monorid Quant Engine • Copyright and developed by Trading Lifestyle Quant</i>`;
     } else if (type === 'TP1_HIT') {
       message = `🎯 <b>[TAKE PROFIT REACHED - 1:2 TARGET FULLY SECURED]</b>\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
         `• <b>Position Action:</b> 100% Closed (1:2 Target)\n` +
         `• <b>Realized P&L:</b> +$${pnl?.toFixed(2) || '0.00'}\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
-        `<i>Market Cipher B 24/7 Execution</i>`;
+        `<i>Monorid 24/7 Execution • Copyright and developed by Trading Lifestyle Quant</i>`;
     } else if (type === 'TP2_HIT') {
       message = `🎯 <b>[TARGET 2 REACHED - 50% SECURED]</b>\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
