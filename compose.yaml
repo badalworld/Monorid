@@ -6,3 +6,11 @@ services:
     ports:
       - "3000:3000"
     restart: unless-stopped
+    environment:
+      - DATA_DIR=/app/data
+    volumes:
+      - monorid_data:/app/data
+
+volumes:
+  monorid_data:
+    driver: local
