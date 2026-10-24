@@ -46,8 +46,8 @@ export async function POST(req: NextRequest) {
     }
 
     const startTime = Date.now();
-    // High-Throughput Concurrent Pipeline (16 in-flight workers) for ultra-fast 1M market scanning
-    const scanResults = await runWithConcurrency(targetSymbols, 16, async (symbol) => {
+    // Balanced High-Throughput Concurrent Pipeline (8 in-flight workers) for rock-solid socket stability
+    const scanResults = await runWithConcurrency(targetSymbols, 8, async (symbol) => {
       try {
         const klines = await fetchMexcKlines(symbol, 280, 'Min1');
         if (klines.length < 60) {

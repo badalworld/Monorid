@@ -606,27 +606,35 @@ export default function Home() {
       const groupEntries = Array.from(groupMap.entries());
       const scanStartTime = Date.now();
 
-      // High-Throughput Parallel Execution: scan all groups concurrently across worker threads
-      const groupScanPromises = groupEntries.map(async ([groupName, groupTickers], gIdx) => {
-        const groupSymbols = groupTickers.map((t) => t.symbol);
-        try {
-          const res = await fetch('/api/mexc/scan', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ symbols: groupSymbols, config }),
-          });
+      // Controlled Concurrent Batches (2 groups per batch) to prevent socket starvation and CDN rate limits
+      const groupResponses: Array<{ success: boolean; groupName: string; groupTickers: MexcTicker[]; groupSymbols: string[]; data: any; gIdx: number }> = [];
+      const BATCH_SIZE = 2;
+      for (let i = 0; i < groupEntries.length; i += BATCH_SIZE) {
+        const batch = groupEntries.slice(i, i + BATCH_SIZE);
+        const batchPromises = batch.map(async ([groupName, groupTickers], bOffset) => {
+          const gIdx = i + bOffset;
+          const groupSymbols = groupTickers.map((t) => t.symbol);
+          try {
+            const res = await fetch('/api/mexc/scan', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ symbols: groupSymbols, config }),
+            });
 
-          if (res.ok) {
-            const data = await res.json();
-            return { success: true, groupName, groupTickers, groupSymbols, data, gIdx };
+            if (res.ok) {
+              const data = await res.json();
+              return { success: true, groupName, groupTickers, groupSymbols, data, gIdx };
+            }
+          } catch (groupErr) {
+            console.warn(`[Scanner] Group scan failed for ${groupName}:`, groupErr);
           }
-        } catch (groupErr) {
-          console.warn(`[Scanner] Group scan failed for ${groupName}:`, groupErr);
-        }
-        return { success: false, groupName, groupTickers, groupSymbols, data: null, gIdx };
-      });
+          return { success: false, groupName, groupTickers, groupSymbols, data: null, gIdx };
+        });
 
-      const groupResponses = await Promise.all(groupScanPromises);
+        const batchResults = await Promise.all(batchPromises);
+        groupResponses.push(...batchResults);
+      }
+
       const scanDuration = Date.now() - scanStartTime;
       setLastScanDurationMs(scanDuration);
 

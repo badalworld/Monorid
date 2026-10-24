@@ -979,11 +979,32 @@ export async function fetchMexcFuturesTickers(forceRefresh = false): Promise<Mex
   return fallback;
 }
 
+// ─── High-Throughput 1M Kline In-Memory Cache (10s TTL) ───────────────────
+interface KlineCacheEntry {
+  candles: Candle[];
+  timestamp: number;
+}
+const klineCache = new Map<string, KlineCacheEntry>();
+
 /**
- * Fetch candles from MEXC Futures REST API with failover endpoints
+ * Fetch candles from MEXC Futures REST API with failover endpoints, start/end scoping, and caching
  */
 export async function fetchMexcKlines(symbol: string, limit: number = 280, interval: string = 'Min1'): Promise<Candle[]> {
+  const cacheKey = `${symbol}_${interval}_${limit}`;
+  const cached = klineCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && now - cached.timestamp < 10000 && cached.candles.length >= 20) {
+    return cached.candles;
+  }
+
+  const nowSec = Math.floor(now / 1000);
+  // Request bounded time range for 1M candles (e.g., 280 mins + 10 min buffer)
+  // Reduces payload size from ~200 KB (2,000 candles) down to ~15 KB, eliminating socket saturation
+  const startSec = Math.max(0, nowSec - ((limit + 10) * 60));
+
   const endpoints = [
+    `https://contract.mexc.com/api/v1/contract/kline/${symbol}?interval=${interval}&start=${startSec}&end=${nowSec}`,
+    `https://futures.mexc.com/api/v1/contract/kline/${symbol}?interval=${interval}&start=${startSec}&end=${nowSec}`,
     `https://contract.mexc.com/api/v1/contract/kline/${symbol}?interval=${interval}`,
     `https://futures.mexc.com/api/v1/contract/kline/${symbol}?interval=${interval}`,
   ];
@@ -992,7 +1013,7 @@ export async function fetchMexcKlines(symbol: string, limit: number = 280, inter
     try {
       const res = await fetchWithRetry(url, {
         headers: { Accept: 'application/json' },
-      }, 2, 5000);
+      }, 1, 8000);
 
       if (res.ok) {
         const data = await res.json().catch(() => null);
@@ -1018,7 +1039,10 @@ export async function fetchMexcKlines(symbol: string, limit: number = 280, inter
               volume: Number(vols[i]),
             });
           }
-          if (candles.length > 20) return candles;
+          if (candles.length > 20) {
+            klineCache.set(cacheKey, { candles, timestamp: Date.now() });
+            return candles;
+          }
         }
       }
     } catch (err) {
