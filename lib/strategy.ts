@@ -34,9 +34,11 @@ export interface StrategyConfig {
   osLevel2: number;      // -53 (Over Sold Level 2)
   emaLength: number;     // 200 (EMA 200 Trend Line)
   riskRewardRatio: number; // 2.0 (1:2 R:R)
-  slBufferPct: number;   // 0.005 (0.5% buffer beyond EMA 200)
-  minSlDistancePct?: number; // 0.015 (1.5% minimum distance from entry to prevent noise stopouts)
+  slBufferPct: number;   // 0.004 (0.4% buffer beyond EMA 200)
+  minSlDistancePct?: number; // 0.005 (0.5% minimum safe distance from entry to prevent noise stopouts)
+  maxRiskDistPct?: number;   // 0.015 (1.5% maximum allowable risk ceiling to eliminate overextended entries)
   minTrendClearancePct?: number; // 0.0015 (0.15% minimum separation from EMA 200 to eliminate chop)
+  osLookbackBars?: number;   // 4 (lookback bars for oversold/overbought wave trough/peak)
   equityRiskPct: number;
   minLeverage: number;
   maxLeverage: number;
@@ -58,14 +60,15 @@ export const DEFAULT_CONFIG: StrategyConfig = {
   channelLength: 10,
   averageLength: 21,
   obLevel1: 60,
-  obLevel2: 53,
+  obLevel2: 50,
   osLevel1: -60,
-  osLevel2: -53,
+  osLevel2: -50,
   emaLength: 200,
   riskRewardRatio: 2.0, // Strictly 1:2 Risk to Reward
-  slBufferPct: 0.005,   // 0.5% safety buffer beyond EMA 200
-  minSlDistancePct: 0.015, // 1.5% minimum safe distance from entry to prevent noise stopouts
+  slBufferPct: 0.004,   // 0.4% safety buffer beyond EMA 200
+  minSlDistancePct: 0.005, // 0.5% minimum safe distance from entry to prevent noise stopouts
   minTrendClearancePct: 0.0015, // 0.15% minimum trend clearance from EMA 200 to eliminate chop
+  osLookbackBars: 4,    // 4 bars lookback for oversold / overbought wave trough/peak
   equityRiskPct: 10,
   minLeverage: 6,
   maxLeverage: 8,
@@ -73,8 +76,8 @@ export const DEFAULT_CONFIG: StrategyConfig = {
   // Backward compatibility aliases
   smaLength: 10,
   rsiLength: 21,
-  rsiHigher: 53,
-  rsiLower: -53,
+  rsiHigher: 50,
+  rsiLower: -50,
   distSMA: 1,
   candleLength: 1,
   rrTp1: 2.0,
@@ -294,8 +297,9 @@ export function analyzeMarketCipherBStrategy(
   const emaLength = config.emaLength || 200;
   const n1 = config.channelLength || 10;
   const n2 = config.averageLength || 21;
-  const obLevel2 = config.obLevel2 ?? 53;
-  const osLevel2 = config.osLevel2 ?? -53;
+  const obLevel2 = config.obLevel2 ?? 50;
+  const osLevel2 = config.osLevel2 ?? -50;
+  const osLookbackBars = config.osLookbackBars ?? 4;
   const minBars = Math.max(emaLength, 35) + 5;
 
   if (candles.length < minBars) {
@@ -325,6 +329,7 @@ export function analyzeMarketCipherBStrategy(
 
   const currentPrice = closes[lastBar];
   const currentEMA = emaSeries[lastBar];
+  const prevEma5Bars = emaSeries[Math.max(0, lastBar - 5)];
 
   const wt1Current = wt1[lastBar];
   const wt2Current = wt2[lastBar];
@@ -341,29 +346,40 @@ export function analyzeMarketCipherBStrategy(
   const completedCandleBearCross =
     prevPrevBar >= 0 && wt1[prevPrevBar] >= wt2[prevPrevBar] && wt1Prev < wt2Prev;
 
-  // Check oversold condition (<= -53) specifically for the bar where crossover occurred
+  // Check oversold condition (<= -50 / -53) within recent trough window
+  const lookbackStartSame = Math.max(0, lastBar - osLookbackBars);
+  const lookbackStartCompleted = Math.max(0, prevBar - osLookbackBars);
+
   const isOversoldSame =
     wt2Current <= osLevel2 ||
     wt1Current <= osLevel2 ||
     wt2Prev <= osLevel2 ||
-    wt1Prev <= osLevel2;
+    wt1Prev <= osLevel2 ||
+    wt1.slice(lookbackStartSame, lastBar + 1).some((v) => v <= osLevel2) ||
+    wt2.slice(lookbackStartSame, lastBar + 1).some((v) => v <= osLevel2);
 
   const isOversoldCompleted =
     wt2Prev <= osLevel2 ||
     wt1Prev <= osLevel2 ||
-    (prevPrevBar >= 0 && (wt2[prevPrevBar] <= osLevel2 || wt1[prevPrevBar] <= osLevel2));
+    (prevPrevBar >= 0 && (wt2[prevPrevBar] <= osLevel2 || wt1[prevPrevBar] <= osLevel2)) ||
+    wt1.slice(lookbackStartCompleted, prevBar + 1).some((v) => v <= osLevel2) ||
+    wt2.slice(lookbackStartCompleted, prevBar + 1).some((v) => v <= osLevel2);
 
-  // Check overbought condition (>= 53) specifically for the bar where crossover occurred
+  // Check overbought condition (>= 50 / 53) within recent peak window
   const isOverboughtSame =
     wt2Current >= obLevel2 ||
     wt1Current >= obLevel2 ||
     wt2Prev >= obLevel2 ||
-    wt1Prev >= obLevel2;
+    wt1Prev >= obLevel2 ||
+    wt1.slice(lookbackStartSame, lastBar + 1).some((v) => v >= obLevel2) ||
+    wt2.slice(lookbackStartSame, lastBar + 1).some((v) => v >= obLevel2);
 
   const isOverboughtCompleted =
     wt2Prev >= obLevel2 ||
     wt1Prev >= obLevel2 ||
-    (prevPrevBar >= 0 && (wt2[prevPrevBar] >= obLevel2 || wt1[prevPrevBar] >= obLevel2));
+    (prevPrevBar >= 0 && (wt2[prevPrevBar] >= obLevel2 || wt1[prevPrevBar] >= obLevel2)) ||
+    wt1.slice(lookbackStartCompleted, prevBar + 1).some((v) => v >= obLevel2) ||
+    wt2.slice(lookbackStartCompleted, prevBar + 1).some((v) => v >= obLevel2);
 
   // Green Dot (Bullish crossover in oversold zone)
   const greenDotSame = sameCandleBullCross && isOversoldSame;
@@ -398,7 +414,9 @@ export function analyzeMarketCipherBStrategy(
 
   // Strategy Execution Criteria:
   // LONG: Green dot in oversold zone AND market > EMA 200 with verified trend clearance (>= 0.15% above EMA)
+  //       AND EMA 200 slope is flat or rising (not sloping downward against the long trade)
   // SHORT: Red dot in overbought zone AND market < EMA 200 with verified trend clearance (>= 0.15% below EMA)
+  //        AND EMA 200 slope is flat or falling (not sloping upward against the short trade)
   // ALL OTHER: HOLD
   const minTrendClearancePct = config.minTrendClearancePct ?? 0.0015; // 0.15% minimum separation from EMA 200 to eliminate chop
   const emaClearanceAbove = currentPrice > currentEMA && ((currentPrice - currentEMA) / currentEMA) >= minTrendClearancePct;
@@ -406,8 +424,12 @@ export function analyzeMarketCipherBStrategy(
   const isMarketAboveEMA = currentPrice > currentEMA;
   const isMarketBelowEMA = currentPrice < currentEMA;
 
-  const buySignal = hasGreenDot && emaClearanceAbove;
-  const sellSignal = hasRedDot && emaClearanceBelow;
+  // EMA 200 Slope Guard: Prevents counter-trend entries into an actively curving trendline
+  const emaSlopeUp = currentEMA >= prevEma5Bars * 0.9997;
+  const emaSlopeDown = currentEMA <= prevEma5Bars * 1.0003;
+
+  const buySignal = hasGreenDot && emaClearanceAbove && emaSlopeUp;
+  const sellSignal = hasRedDot && emaClearanceBelow && emaSlopeDown;
 
   let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
   let signalType: 'CIPHER_B_GREEN_DOT' | 'CIPHER_B_RED_DOT' | 'SMA_CROSS' | 'REVERSAL' | 'NONE' = 'NONE';
@@ -422,6 +444,12 @@ export function analyzeMarketCipherBStrategy(
     action = 'SELL';
     signalType = 'CIPHER_B_RED_DOT';
     message = `Monorid: RED DOT in Overbought Zone (wt1: ${wt1Current.toFixed(1)}, wt2: ${wt2Current.toFixed(1)}) & Price BELOW EMA 200 ($${currentPrice.toFixed(4)} < $${currentEMA.toFixed(4)})`;
+  } else if (hasGreenDot && isMarketAboveEMA && !emaSlopeUp) {
+    eliminatedReason = `Adverse EMA 200 Slope: EMA 200 is curving downward ($${currentEMA.toFixed(4)} < $${prevEma5Bars.toFixed(4)}) for Long`;
+    message = `Monorid: Long rejected — ${eliminatedReason}`;
+  } else if (hasRedDot && isMarketBelowEMA && !emaSlopeDown) {
+    eliminatedReason = `Adverse EMA 200 Slope: EMA 200 is curving upward ($${currentEMA.toFixed(4)} > $${prevEma5Bars.toFixed(4)}) for Short`;
+    message = `Monorid: Short rejected — ${eliminatedReason}`;
   } else if (hasGreenDot && isMarketAboveEMA && !emaClearanceAbove) {
     eliminatedReason = `Insufficient Trend Clearance: Price ($${currentPrice.toFixed(4)}) is hovering within 0.15% chop band of EMA 200 ($${currentEMA.toFixed(4)})`;
     message = `Monorid: Long rejected — ${eliminatedReason}`;
@@ -443,8 +471,9 @@ export function analyzeMarketCipherBStrategy(
   }
 
   // ── Risk Management: Stop Loss strictly below/above EMA 200, Take Profit strictly 1:2 R:R ──
-  const slBufferPct = config.slBufferPct ?? 0.005; // 0.5% buffer beyond EMA 200
-  const minSlDistancePct = config.minSlDistancePct ?? 0.015; // 1.5% minimum safe distance from entry to prevent noise stopouts
+  const slBufferPct = config.slBufferPct ?? 0.004; // 0.4% buffer beyond EMA 200
+  const minSlDistancePct = config.minSlDistancePct ?? 0.005; // 0.5% minimum safe distance from entry to prevent noise stopouts
+  const maxRiskDistPct = config.maxRiskDistPct ?? 0.015;     // 1.5% maximum allowable risk ceiling to eliminate overextended entries
   const rr = config.riskRewardRatio ?? 2.0;        // Strictly 1:2 R:R
 
   let slLevel: number | undefined;
@@ -455,7 +484,7 @@ export function analyzeMarketCipherBStrategy(
   let riskDist: number | undefined;
 
   if (action === 'BUY') {
-    // Stop loss strictly below EMA 200 with safety buffer, and at least 1.5% breathing room from entry
+    // Stop loss strictly below EMA 200 with safety buffer, and at least minimum breathing room from entry
     const rawSl = currentEMA * (1 - slBufferPct);
     const minSafeSl = currentPrice * (1 - minSlDistancePct);
     slLevel = Math.min(rawSl, minSafeSl);
@@ -478,9 +507,21 @@ export function analyzeMarketCipherBStrategy(
       tp2Level = undefined;
       tp3Level = undefined;
       riskDist = undefined;
+    } else if (config.maxRiskDistPct && riskDist / currentPrice > config.maxRiskDistPct) {
+      action = 'HOLD';
+      signalType = 'NONE';
+      candleTiming = 'NONE';
+      eliminatedReason = `Overextended from EMA 200: Risk distance (${((riskDist / currentPrice) * 100).toFixed(2)}%) exceeds ${(config.maxRiskDistPct * 100).toFixed(1)}% ceiling — awaiting pullback to trendline`;
+      message = `Monorid: Long trade skipped — ${eliminatedReason}.`;
+      slLevel = undefined;
+      tpLevel = undefined;
+      tp1Level = undefined;
+      tp2Level = undefined;
+      tp3Level = undefined;
+      riskDist = undefined;
     }
   } else if (action === 'SELL') {
-    // Stop loss strictly above EMA 200 with safety buffer, and at least 1.5% breathing room from entry
+    // Stop loss strictly above EMA 200 with safety buffer, and at least minimum breathing room from entry
     const rawSl = currentEMA * (1 + slBufferPct);
     const minSafeSl = currentPrice * (1 + minSlDistancePct);
     slLevel = Math.max(rawSl, minSafeSl);
@@ -496,6 +537,18 @@ export function analyzeMarketCipherBStrategy(
       signalType = 'NONE';
       candleTiming = 'NONE';
       eliminatedReason = `Negative TP risk calculation: 1:2 TP target ($${tpLevel.toFixed(4)}) is mathematically below zero due to extreme EMA distance`;
+      message = `Monorid: Short trade skipped — ${eliminatedReason}.`;
+      slLevel = undefined;
+      tpLevel = undefined;
+      tp1Level = undefined;
+      tp2Level = undefined;
+      tp3Level = undefined;
+      riskDist = undefined;
+    } else if (config.maxRiskDistPct && riskDist / currentPrice > config.maxRiskDistPct) {
+      action = 'HOLD';
+      signalType = 'NONE';
+      candleTiming = 'NONE';
+      eliminatedReason = `Overextended from EMA 200: Risk distance (${((riskDist / currentPrice) * 100).toFixed(2)}%) exceeds ${(config.maxRiskDistPct * 100).toFixed(1)}% ceiling — awaiting pullback to trendline`;
       message = `Monorid: Short trade skipped — ${eliminatedReason}.`;
       slLevel = undefined;
       tpLevel = undefined;

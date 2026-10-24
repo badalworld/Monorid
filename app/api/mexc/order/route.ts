@@ -209,19 +209,29 @@ export async function POST(req: NextRequest) {
               let hitTp = false;
               let hitSl = false;
 
-              const reachedSl = isLong
-                ? exit <= targets.slPrice && targets.slPrice < entry
-                : exit >= targets.slPrice && targets.slPrice > entry;
-              const reachedTp = isLong
-                ? exit >= targets.tp1Price && targets.tp1Price > entry
-                : exit <= targets.tp1Price && targets.tp1Price < entry && targets.tp1Price > 0;
+              const extOid = String(order.externalOid || '');
+              const isSlOrder = extOid.includes('STOP_LOSS') || (extOid.includes('planorder') && pnl < 0);
+              const isTpOrder = extOid.includes('TAKE_PROFIT') || (extOid.includes('planorder') && pnl > 0);
 
-              if (reachedTp && pnl > 0.0001) {
-                closeReason = 'TP1';
-                hitTp = true;
-              } else if (reachedSl && pnl < -0.0001) {
+              const reachedSl = isLong
+                ? exit <= targets.slPrice * 1.0015 && targets.slPrice < entry
+                : exit >= targets.slPrice * 0.9985 && targets.slPrice > entry;
+              const reachedTp = isLong
+                ? exit >= targets.tp1Price * 0.9985 && targets.tp1Price > entry
+                : exit <= targets.tp1Price * 1.0015 && targets.tp1Price < entry && targets.tp1Price > 0;
+
+              if (isSlOrder || (reachedSl && pnl < -0.0001)) {
                 closeReason = 'SL';
                 hitSl = true;
+              } else if (isTpOrder || (reachedTp && pnl > 0.0001)) {
+                closeReason = 'TP1';
+                hitTp = true;
+              } else if (pnl < -0.0001) {
+                closeReason = 'SL';
+                hitSl = true;
+              } else if (pnl > 0.0001) {
+                closeReason = 'TP1';
+                hitTp = true;
               } else {
                 closeReason = 'MANUAL';
               }

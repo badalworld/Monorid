@@ -382,31 +382,60 @@ export function deduplicateClosedPositions(positions: MexcPosition[]): MexcPosit
     const netRealizedPnl = Number((realizedPnl - fee + fundingFee).toFixed(6));
 
     const reachedTp = isLong
-      ? (exitPrice >= tp1Price && tp1Price > entryPrice)
-      : (exitPrice <= tp1Price && tp1Price < entryPrice && tp1Price > 0);
+      ? (exitPrice >= tp1Price * 0.9985 && tp1Price > entryPrice)
+      : (exitPrice <= tp1Price * 1.0015 && tp1Price < entryPrice && tp1Price > 0);
     const reachedSl = isLong
-      ? (exitPrice <= slPrice && slPrice < entryPrice && slPrice > 0)
-      : (exitPrice >= slPrice && slPrice > entryPrice);
+      ? (exitPrice <= slPrice * 1.0015 && slPrice < entryPrice && slPrice > 0)
+      : (exitPrice >= slPrice * 0.9985 && slPrice > entryPrice);
 
     // Preserve explicit close reason with proper priority:
-    // Only classify as SL if price actually reached SL AND trade had a loss.
-    // Only classify as TP1 if price actually reached TP1 AND trade had a profit.
-    // Premature exits, manual closes, or unreached targets are strictly MANUAL.
+    // Only classify as SL if price reached SL (with 15 bps slippage tolerance) AND trade had a loss,
+    // or if the order was an explicit stop loss trigger order.
+    // Premature exits or unreached targets are strictly MANUAL.
     let closeReason: 'TP1' | 'TP2' | 'TP3' | 'SL' | 'MANUAL';
     let tp1Hit = false;
     let slHit = false;
 
-    if (reachedSl && realizedPnl < -0.0001) {
-      closeReason = 'SL';
-      slHit = true;
-    } else if (reachedTp && realizedPnl > 0.0001) {
-      closeReason = 'TP1';
-      tp1Hit = true;
+    const hasSlTag = Boolean(
+      (incoming.orderId && incoming.orderId.includes('STOP_LOSS')) ||
+      (incoming.id && incoming.id.includes('STOP_LOSS')) ||
+      (existing.orderId && existing.orderId.includes('STOP_LOSS')) ||
+      (existing.id && existing.id.includes('STOP_LOSS'))
+    );
+    const hasTpTag = Boolean(
+      (incoming.orderId && incoming.orderId.includes('TAKE_PROFIT')) ||
+      (incoming.id && incoming.id.includes('TAKE_PROFIT')) ||
+      (existing.orderId && existing.orderId.includes('TAKE_PROFIT')) ||
+      (existing.id && existing.id.includes('TAKE_PROFIT'))
+    );
+
+    if (existing.closeReason === 'MANUAL' || incoming.closeReason === 'MANUAL') {
+      if ((reachedSl || hasSlTag) && realizedPnl < -0.0001) {
+        closeReason = 'SL';
+        slHit = true;
+      } else if ((reachedTp || hasTpTag) && realizedPnl > 0.0001) {
+        closeReason = 'TP1';
+        tp1Hit = true;
+      } else {
+        closeReason = 'MANUAL';
+      }
     } else if (existing.closeReason === 'TP2' || incoming.closeReason === 'TP2') {
       closeReason = 'TP2';
       tp1Hit = true;
     } else if (existing.closeReason === 'TP3' || incoming.closeReason === 'TP3') {
       closeReason = 'TP3';
+      tp1Hit = true;
+    } else if ((reachedSl || hasSlTag) && realizedPnl < -0.0001) {
+      closeReason = 'SL';
+      slHit = true;
+    } else if ((reachedTp || hasTpTag) && realizedPnl > 0.0001) {
+      closeReason = 'TP1';
+      tp1Hit = true;
+    } else if (existing.closeReason === 'SL' || incoming.closeReason === 'SL') {
+      closeReason = 'SL';
+      slHit = true;
+    } else if (existing.closeReason === 'TP1' || incoming.closeReason === 'TP1') {
+      closeReason = 'TP1';
       tp1Hit = true;
     } else {
       closeReason = 'MANUAL';
@@ -493,13 +522,22 @@ export function deduplicateClosedPositions(positions: MexcPosition[]): MexcPosit
       const net = pos.netRealizedPnl !== undefined ? pos.netRealizedPnl : (pnl - fee + fundingFee);
 
       const reachedTp = isLong
-        ? (exitPrice >= tp1Price && tp1Price > entryPrice)
-        : (exitPrice <= tp1Price && tp1Price < entryPrice && tp1Price > 0);
+        ? (exitPrice >= tp1Price * 0.9985 && tp1Price > entryPrice)
+        : (exitPrice <= tp1Price * 1.0015 && tp1Price < entryPrice && tp1Price > 0);
       const reachedSl = isLong
-        ? (exitPrice <= slPrice && slPrice < entryPrice && slPrice > 0)
-        : (exitPrice >= slPrice && slPrice > entryPrice);
+        ? (exitPrice <= slPrice * 1.0015 && slPrice < entryPrice && slPrice > 0)
+        : (exitPrice >= slPrice * 0.9985 && slPrice > entryPrice);
 
-      // Strict close reason and hit attribution: TP1 requires profit > 0.0001 AND reachedTp; SL requires loss < -0.0001 AND reachedSl
+      const hasSlTag = Boolean(
+        (pos.orderId && pos.orderId.includes('STOP_LOSS')) ||
+        (pos.id && pos.id.includes('STOP_LOSS'))
+      );
+      const hasTpTag = Boolean(
+        (pos.orderId && pos.orderId.includes('TAKE_PROFIT')) ||
+        (pos.id && pos.id.includes('TAKE_PROFIT'))
+      );
+
+      // Strict close reason and hit attribution: preserve verified SL / TP1, check triggers and tags
       let closeReason: 'TP1' | 'TP2' | 'TP3' | 'SL' | 'MANUAL';
       let tp1Hit = false;
       let slHit = false;
@@ -512,10 +550,10 @@ export function deduplicateClosedPositions(positions: MexcPosition[]): MexcPosit
       } else if (pos.closeReason === 'TP3') {
         closeReason = 'TP3';
         tp1Hit = true;
-      } else if (reachedTp && pnl > 0.0001) {
+      } else if ((reachedTp || hasTpTag) && pnl > 0.0001) {
         closeReason = 'TP1';
         tp1Hit = true;
-      } else if (reachedSl && pnl < -0.0001) {
+      } else if ((reachedSl || hasSlTag) && pnl < -0.0001) {
         closeReason = 'SL';
         slHit = true;
       } else {
@@ -1392,21 +1430,26 @@ export async function setMexcTPSL(
       }
     }
 
-    // 4. Also call position stoporder endpoint (/stoporder/place) with Latest Price reference
-    try {
-      const stoporderPayload: Record<string, any> = {
-        symbol,
-        positionType,
-        openType: openType || 1,
-        vol,
-        lossTrend: 1,   // 1 = Latest price
-        profitTrend: 1, // 1 = Latest price
-      };
-      if (formattedSl) stoporderPayload.stopLossPrice = formattedSl;
-      if (formattedTp) stoporderPayload.takeProfitPrice = formattedTp;
-      await mexcAuthRequest(apiKey, secretKey, 'POST', '/api/v1/private/stoporder/place', stoporderPayload);
-    } catch {
-      // Non-blocking fallback since planorder is already placed
+    // 4. Fallback: only call position stoporder endpoint if planorder placement did not succeed
+    if (!placedAny) {
+      try {
+        const stoporderPayload: Record<string, any> = {
+          symbol,
+          positionType,
+          openType: openType || 1,
+          vol,
+          lossTrend: 1,   // 1 = Latest price
+          profitTrend: 1, // 1 = Latest price
+        };
+        if (formattedSl) stoporderPayload.stopLossPrice = formattedSl;
+        if (formattedTp) stoporderPayload.takeProfitPrice = formattedTp;
+        const stopRes = await mexcAuthRequest(apiKey, secretKey, 'POST', '/api/v1/private/stoporder/place', stoporderPayload);
+        if (stopRes && stopRes.success) {
+          placedAny = true;
+        }
+      } catch {
+        // Non-blocking fallback
+      }
     }
 
     if (placedAny) {

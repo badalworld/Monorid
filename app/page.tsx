@@ -1041,16 +1041,16 @@ export default function Home() {
                 fee: updatedPos.fee,
                 fundingFee: 0,
                 netPnl: updatedPos.netRealizedPnl,
-                message: `Take Profit 1:2 Hit: ${p.symbol} (${p.side}) closed at $${newPrice < 1 ? newPrice.toFixed(6) : newPrice.toFixed(4)}. Realized Profit: +$${updatedPos.realizedPnl.toFixed(2)} (Net: +$${updatedPos.netRealizedPnl.toFixed(2)}, Fee: -$${estFee.toFixed(4)}).`,
+                message: `Take Profit 1:2 Hit: ${p.symbol} (${p.side}) reached target $${newPrice < 1 ? newPrice.toFixed(6) : newPrice.toFixed(4)}. Realized Profit: +$${updatedPos.realizedPnl.toFixed(2)} (Net: +$${updatedPos.netRealizedPnl.toFixed(2)}, Fee: -$${estFee.toFixed(4)}).`,
               });
               sendTelegramAlert('TP1_HIT', p, newPrice, updatedPos.realizedPnl);
 
-              if (apiKey && secretKey) {
-                executeMexcClose(p.symbol, isLong ? 1 : 2, p.contractVol);
-                executeCancelPendingOrders(p.symbol);
+              // For paper/demo positions without exchange order, close locally
+              // For live positions with active exchange TP/SL plan orders, the exchange natively executes and reconciles
+              if (!p.orderId) {
+                updatedPos.closedVol = p.contractVol;
+                persistTradesToServer(updatedPos, 'append');
               }
-              updatedPos.closedVol = p.contractVol;
-              persistTradesToServer(updatedPos, 'append');
             }
 
             const reachedSl = isLong
@@ -1094,13 +1094,12 @@ export default function Home() {
               });
               sendTelegramAlert('SL_HIT', p, newPrice, slPnl);
 
-              if (apiKey && secretKey) {
-                const remaining = Math.max(0, p.contractVol - updatedPos.closedVol);
-                if (remaining >= 1) executeMexcClose(p.symbol, isLong ? 1 : 2, remaining);
-                executeCancelPendingOrders(p.symbol);
+              // For paper/demo positions without exchange order, close locally
+              // For live positions with active exchange TP/SL plan orders, the exchange natively executes and reconciles
+              if (!p.orderId) {
+                updatedPos.closedVol = p.contractVol;
+                persistTradesToServer(updatedPos, 'append');
               }
-              updatedPos.closedVol = p.contractVol;
-              persistTradesToServer(updatedPos, 'append');
             }
 
             return updatedPos;
@@ -1801,36 +1800,48 @@ export default function Home() {
             const positionId = order.positionId ? Number(order.positionId) : undefined;
 
             const isLong = side === 'LONG';
+            const slTol = slPrice > 0 ? slPrice * 0.0015 : 0;
+            const tpTol = tp1Price > 0 ? tp1Price * 0.0015 : 0;
             const reachedSl = isLong
-              ? (slPrice < resolvedEntry && slPrice > 0 && exit <= slPrice)
-              : (slPrice > resolvedEntry && exit >= slPrice);
+              ? (slPrice < resolvedEntry && slPrice > 0 && exit <= slPrice + slTol)
+              : (slPrice > resolvedEntry && exit >= slPrice - slTol);
             const reachedTp = isLong
-              ? (tp1Price > resolvedEntry && exit >= tp1Price)
-              : (tp1Price < resolvedEntry && tp1Price > 0 && exit <= tp1Price);
+              ? (tp1Price > resolvedEntry && exit >= tp1Price - tpTol)
+              : (tp1Price < resolvedEntry && tp1Price > 0 && exit <= tp1Price + tpTol);
+
+            const extOid = String(order.externalOid || '');
+            const isSlOrder = extOid.includes('STOP_LOSS') || (extOid.includes('planorder') && pnl < 0);
+            const isTpOrder = extOid.includes('TAKE_PROFIT') || (extOid.includes('planorder') && pnl > 0);
 
             let closeReason: 'TP1' | 'TP2' | 'TP3' | 'SL' | 'MANUAL';
             let hitTp = false;
             let hitSl = false;
 
-            if (localMatch?.closeReason === 'TP2' || localMatch?.closeReason === 'TP3') {
+            if (localMatch?.closeReason && localMatch.closeReason !== 'MANUAL') {
               closeReason = localMatch.closeReason;
-              hitTp = true;
-            } else if (reachedTp && pnl > 0.0001) {
-              closeReason = 'TP1';
-              hitTp = true;
-            } else if (reachedSl && pnl < -0.0001) {
+              hitTp = localMatch.closeReason.startsWith('TP');
+              hitSl = localMatch.closeReason === 'SL';
+            } else if (isSlOrder || (reachedSl && pnl < -0.0001)) {
               closeReason = 'SL';
               hitSl = true;
+            } else if (isTpOrder || (reachedTp && pnl > 0.0001)) {
+              closeReason = 'TP1';
+              hitTp = true;
+            } else if (pnl < -0.0001) {
+              closeReason = 'SL';
+              hitSl = true;
+            } else if (pnl > 0.0001) {
+              closeReason = 'TP1';
+              hitTp = true;
             } else {
-              // Enforce that automated exits are strictly TP or SL based on realized outcome
-              closeReason = pnl >= 0 ? 'TP1' : 'SL';
+              closeReason = 'MANUAL';
             }
 
             // Always cancel all remaining plan/stop/trigger orders for this symbol upon close confirmation
             executeCancelPendingOrders(order.symbol);
 
             // Only trigger cooldown if trade was an actual verified Stop Loss hit
-            if (hitSl && reachedSl && order.createTime && (Date.now() - order.createTime < 30 * 60 * 1000)) {
+            if (hitSl && (reachedSl || isSlOrder) && order.createTime && (Date.now() - order.createTime < 30 * 60 * 1000)) {
               triggerLossCooldown(order.symbol, 'Recent Exchange Loss');
             }
 
