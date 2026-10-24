@@ -1009,95 +1009,88 @@ export default function Home() {
               ? (p.tp1Price > p.entryPrice && newPrice >= p.tp1Price && newPrice > p.entryPrice)
               : (p.tp1Price < p.entryPrice && p.tp1Price > 0 && newPrice <= p.tp1Price && newPrice < p.entryPrice);
 
-            const tpKey = `${p.id}-TP1`;
-            if (!p.tp1Hit && !executedTpsRef.current.has(tpKey) && reachedTp) {
-              executedTpsRef.current.add(tpKey);
-              updatedPos.tp1Hit = true;
-              updatedPos.tp2Hit = true;
-              updatedPos.tp3Hit = true;
-              updatedPos.currentSize = 0;
-              updatedPos.status = 'CLOSED';
-              updatedPos.closeReason = 'TP1';
-              updatedPos.exitPrice = newPrice;
-              updatedPos.closedAt = Date.now();
-              updatedPos.unrealizedPnl = 0;
-              updatedPos.unrealizedPnlPct = 0;
-              const tpPnl = p.equityUsed * movePct * p.leverage;
-              updatedPos.realizedPnl += tpPnl;
-              updatedPos.realizedPnlPct = p.equityUsed > 0 ? (updatedPos.realizedPnl / p.equityUsed) * 100 : 0;
-              const estFee = Number(((p.equityUsed * p.leverage) * 0.0008).toFixed(4));
-              updatedPos.fee = estFee;
-              updatedPos.fundingFee = 0;
-              updatedPos.netRealizedPnl = Number((updatedPos.realizedPnl - estFee).toFixed(4));
-
-              addLog({
-                groupName: p.groupName,
-                symbol: p.symbol,
-                type: 'TP_HIT',
-                side: p.side,
-                price: newPrice,
-                sizeFraction: '100% Full Exit (1:2 Target)',
-                pnl: updatedPos.realizedPnl,
-                fee: updatedPos.fee,
-                fundingFee: 0,
-                netPnl: updatedPos.netRealizedPnl,
-                message: `Take Profit 1:2 Hit: ${p.symbol} (${p.side}) reached target $${newPrice < 1 ? newPrice.toFixed(6) : newPrice.toFixed(4)}. Realized Profit: +$${updatedPos.realizedPnl.toFixed(2)} (Net: +$${updatedPos.netRealizedPnl.toFixed(2)}, Fee: -$${estFee.toFixed(4)}).`,
-              });
-              sendTelegramAlert('TP1_HIT', p, newPrice, updatedPos.realizedPnl);
-
-              // For paper/demo positions without exchange order, close locally
-              // For live positions with active exchange TP/SL plan orders, the exchange natively executes and reconciles
-              if (!p.orderId) {
-                updatedPos.closedVol = p.contractVol;
-                persistTradesToServer(updatedPos, 'append');
-              }
-            }
-
             const reachedSl = isLong
               ? (p.slPrice < p.entryPrice && p.slPrice > 0 && newPrice <= p.slPrice && newPrice < p.entryPrice)
               : (p.slPrice > p.entryPrice && newPrice >= p.slPrice && newPrice > p.entryPrice);
 
-            const slKey = `${p.id}-SL`;
-            if (!p.slHit && !executedTpsRef.current.has(slKey) && reachedSl) {
-              executedTpsRef.current.add(slKey);
-              updatedPos.slHit = true;
-              updatedPos.currentSize = 0;
-              updatedPos.status = 'CLOSED';
-              updatedPos.closeReason = 'SL';
-              updatedPos.exitPrice = newPrice;
-              updatedPos.closedAt = Date.now();
-              updatedPos.unrealizedPnl = 0;
-              updatedPos.unrealizedPnlPct = 0;
-              const remainingFraction = p.contractVol > 0 ? Math.max(0, (p.contractVol - updatedPos.closedVol) / p.contractVol) : 1.0;
-              const slPnl = (p.equityUsed * remainingFraction) * movePct * p.leverage;
-              updatedPos.realizedPnl += slPnl;
-              updatedPos.realizedPnlPct = p.equityUsed > 0 ? (updatedPos.realizedPnl / p.equityUsed) * 100 : 0;
-              const estFee = Number(((p.equityUsed * p.leverage) * 0.0008).toFixed(4));
-              updatedPos.fee = estFee;
-              updatedPos.fundingFee = 0;
-              updatedPos.netRealizedPnl = Number((updatedPos.realizedPnl - estFee).toFixed(4));
-
-              // Activate escalated post-loss cooldown to prevent churn on chopping coin
-              triggerLossCooldown(p.symbol, 'Stop Loss Hit');
-
-              addLog({
-                groupName: p.groupName,
-                symbol: p.symbol,
-                type: 'SL_HIT',
-                side: p.side,
-                price: newPrice,
-                pnl: slPnl,
-                fee: updatedPos.fee,
-                fundingFee: 0,
-                netPnl: updatedPos.netRealizedPnl,
-                message: `Stop Loss Hit: ${p.symbol} (${p.side}) executed at $${newPrice < 1 ? newPrice.toFixed(6) : newPrice.toFixed(4)}. Realized Loss: -$${Math.abs(slPnl).toFixed(2)} (Net: -$${Math.abs(updatedPos.netRealizedPnl).toFixed(2)}, Fee: -$${estFee.toFixed(4)}). Post-loss cooldown activated on ${p.symbol}.`,
-              });
-              sendTelegramAlert('SL_HIT', p, newPrice, slPnl);
-
-              // For paper/demo positions without exchange order, close locally
-              // For live positions with active exchange TP/SL plan orders, the exchange natively executes and reconciles
-              if (!p.orderId) {
+            // For paper/demo positions without exchange order, close locally upon target hit
+            // For live positions with active exchange TP/SL plan orders, the exchange matching engine natively executes and syncFromExchange reconciles
+            if (!p.orderId) {
+              const tpKey = `${p.id}-TP1`;
+              if (!p.tp1Hit && !executedTpsRef.current.has(tpKey) && reachedTp) {
+                executedTpsRef.current.add(tpKey);
+                updatedPos.tp1Hit = true;
+                updatedPos.tp2Hit = true;
+                updatedPos.tp3Hit = true;
+                updatedPos.currentSize = 0;
+                updatedPos.status = 'CLOSED';
+                updatedPos.closeReason = 'TP1';
+                updatedPos.exitPrice = newPrice;
+                updatedPos.closedAt = Date.now();
                 updatedPos.closedVol = p.contractVol;
+                updatedPos.unrealizedPnl = 0;
+                updatedPos.unrealizedPnlPct = 0;
+                const tpPnl = p.equityUsed * movePct * p.leverage;
+                updatedPos.realizedPnl += tpPnl;
+                updatedPos.realizedPnlPct = p.equityUsed > 0 ? (updatedPos.realizedPnl / p.equityUsed) * 100 : 0;
+                const estFee = Number(((p.equityUsed * p.leverage) * 0.0008).toFixed(4));
+                updatedPos.fee = estFee;
+                updatedPos.fundingFee = 0;
+                updatedPos.netRealizedPnl = Number((updatedPos.realizedPnl - estFee).toFixed(4));
+
+                addLog({
+                  groupName: p.groupName,
+                  symbol: p.symbol,
+                  type: 'TP_HIT',
+                  side: p.side,
+                  price: newPrice,
+                  sizeFraction: '100% Full Exit (1:2 Target)',
+                  pnl: updatedPos.realizedPnl,
+                  fee: updatedPos.fee,
+                  fundingFee: 0,
+                  netPnl: updatedPos.netRealizedPnl,
+                  message: `Take Profit 1:2 Hit: ${p.symbol} (${p.side}) reached target $${newPrice < 1 ? newPrice.toFixed(6) : newPrice.toFixed(4)}. Realized Profit: +$${updatedPos.realizedPnl.toFixed(2)} (Net: +$${updatedPos.netRealizedPnl.toFixed(2)}, Fee: -$${estFee.toFixed(4)}).`,
+                });
+                sendTelegramAlert('TP1_HIT', p, newPrice, updatedPos.realizedPnl);
+                persistTradesToServer(updatedPos, 'append');
+              }
+
+              const slKey = `${p.id}-SL`;
+              if (!p.slHit && !executedTpsRef.current.has(slKey) && reachedSl) {
+                executedTpsRef.current.add(slKey);
+                updatedPos.slHit = true;
+                updatedPos.currentSize = 0;
+                updatedPos.status = 'CLOSED';
+                updatedPos.closeReason = 'SL';
+                updatedPos.exitPrice = newPrice;
+                updatedPos.closedAt = Date.now();
+                updatedPos.closedVol = p.contractVol;
+                updatedPos.unrealizedPnl = 0;
+                updatedPos.unrealizedPnlPct = 0;
+                const remainingFraction = p.contractVol > 0 ? Math.max(0, (p.contractVol - updatedPos.closedVol) / p.contractVol) : 1.0;
+                const slPnl = (p.equityUsed * remainingFraction) * movePct * p.leverage;
+                updatedPos.realizedPnl += slPnl;
+                updatedPos.realizedPnlPct = p.equityUsed > 0 ? (updatedPos.realizedPnl / p.equityUsed) * 100 : 0;
+                const estFee = Number(((p.equityUsed * p.leverage) * 0.0008).toFixed(4));
+                updatedPos.fee = estFee;
+                updatedPos.fundingFee = 0;
+                updatedPos.netRealizedPnl = Number((updatedPos.realizedPnl - estFee).toFixed(4));
+
+                triggerLossCooldown(p.symbol, 'Stop Loss Hit');
+
+                addLog({
+                  groupName: p.groupName,
+                  symbol: p.symbol,
+                  type: 'SL_HIT',
+                  side: p.side,
+                  price: newPrice,
+                  pnl: slPnl,
+                  fee: updatedPos.fee,
+                  fundingFee: 0,
+                  netPnl: updatedPos.netRealizedPnl,
+                  message: `Stop Loss Hit: ${p.symbol} (${p.side}) executed at $${newPrice < 1 ? newPrice.toFixed(6) : newPrice.toFixed(4)}. Realized Loss: -$${Math.abs(slPnl).toFixed(2)} (Net: -$${Math.abs(updatedPos.netRealizedPnl).toFixed(2)}, Fee: -$${estFee.toFixed(4)}). Post-loss cooldown activated on ${p.symbol}.`,
+                });
+                sendTelegramAlert('SL_HIT', p, newPrice, slPnl);
                 persistTradesToServer(updatedPos, 'append');
               }
             }
@@ -1849,6 +1842,7 @@ export default function Home() {
               id: `mexc-${order.orderId}`,
               orderId,
               positionId,
+              externalOid: extOid || localMatch?.externalOid,
               symbol: order.symbol,
               groupName,
               botId,

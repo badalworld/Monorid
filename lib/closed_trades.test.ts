@@ -1061,4 +1061,95 @@ test('trigger directions: Long and Short plan order triggerType and trend are ma
   assert.equal(shortConfig.tpTrend, 1, 'Short TP trend must be 1 (Latest Price benchmark)');
 });
 
+test('deduplicateClosedPositions recognizes externalOid planorder with loss as verified SL', () => {
+  const planOrderTrade: MexcPosition = {
+    id: 'mexc-867735134370682432',
+    orderId: '867735134370682432',
+    externalOid: 'planorder_867735134370682432_594',
+    symbol: 'PHA_USDT',
+    groupName: 'MEXC Exchange History',
+    botId: 'mexc-exchange',
+    botCode: 'EXCHANGE',
+    botName: 'Exchange Fill',
+    side: 'SHORT',
+    entryPrice: 0.0502,
+    currentPrice: 0.0509,
+    exitPrice: 0.0509,
+    leverage: 10,
+    initialSize: 10,
+    currentSize: 0,
+    equityUsed: 10,
+    contractVol: 1,
+    closedVol: 1,
+    slPrice: 0.0509,
+    tp1Price: 0.0487,
+    tp2Price: 0.0487,
+    tp3Price: 0.0487,
+    tp1Hit: false,
+    tp2Hit: false,
+    tp3Hit: false,
+    slHit: false,
+    unrealizedPnl: 0,
+    unrealizedPnlPct: 0,
+    realizedPnl: -0.14,
+    fee: 0.008,
+    netRealizedPnl: -0.148,
+    status: 'CLOSED',
+    createdAt: Date.now() - 60000,
+    closedAt: Date.now(),
+    closeReason: 'MANUAL', // Stale fallback on disk
+  };
+
+  const result = deduplicateClosedPositions([planOrderTrade]);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].closeReason, 'SL', 'Trade executed by planorder with loss must be attributed to SL');
+  assert.equal(result[0].slHit, true);
+});
+
+test('deduplicateClosedPositions recognizes stoporder_STOP_LOSS externalOid as verified SL', () => {
+  const stopOrderTrade: MexcPosition = {
+    id: 'mexc-866646303822697472',
+    orderId: '866646303822697472',
+    externalOid: 'stoporder_STOP_LOSS_1522554954_575066831_0',
+    symbol: 'LTC_USDT',
+    groupName: 'Titan Momentum Core',
+    botId: 'mean-reversion',
+    botCode: 'MEAN REVERSION',
+    botName: 'Mean Reversion',
+    side: 'SHORT',
+    entryPrice: 55.63,
+    currentPrice: 56.46,
+    exitPrice: 56.48, // 0.03% slippage beyond nominal SL
+    leverage: 10,
+    initialSize: 10,
+    currentSize: 0,
+    equityUsed: 10,
+    contractVol: 1,
+    closedVol: 1,
+    slPrice: 56.46,
+    tp1Price: 53.96,
+    tp2Price: 53.96,
+    tp3Price: 53.96,
+    tp1Hit: false,
+    tp2Hit: false,
+    tp3Hit: false,
+    slHit: false,
+    unrealizedPnl: 0,
+    unrealizedPnlPct: 0,
+    realizedPnl: -0.15,
+    fee: 0.009,
+    netRealizedPnl: -0.159,
+    status: 'CLOSED',
+    createdAt: Date.now() - 120000,
+    closedAt: Date.now(),
+    closeReason: 'MANUAL',
+  };
+
+  const result = deduplicateClosedPositions([stopOrderTrade]);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].closeReason, 'SL', 'Stoporder STOP_LOSS tag must guarantee SL close reason');
+  assert.equal(result[0].slHit, true);
+});
+
+
 

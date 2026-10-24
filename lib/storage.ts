@@ -130,11 +130,17 @@ async function safeReadJson<T>(filePath: string, defaultValue: T): Promise<T> {
  * Helper to ensure a position is categorized as closed trade history
  */
 function ensureClosedTrade(pos: MexcPosition): MexcPosition {
+  const pnl = pos.realizedPnl ?? pos.netRealizedPnl;
+  const inferredReason: 'TP1' | 'SL' | 'MANUAL' =
+    pnl !== undefined && pnl < -0.0001 ? 'SL' :
+    pnl !== undefined && pnl > 0.0001 ? 'TP1' :
+    'MANUAL';
+
   return {
     ...pos,
     status: 'CLOSED',
     closedAt: pos.closedAt || pos.createdAt || Date.now(),
-    closeReason: pos.closeReason || 'MANUAL',
+    closeReason: pos.closeReason || inferredReason,
   };
 }
 

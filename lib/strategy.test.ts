@@ -95,7 +95,7 @@ test('analyzeMarketCipherBStrategy executes BUY on Green Dot in Oversold Zone wh
   const result = analyzeMarketCipherBStrategy(candles, DEFAULT_CONFIG);
 
   assert.equal(result.action, 'BUY');
-  assert.equal(result.signalType, 'CIPHER_B_GREEN_DOT');
+  assert.equal(result.signalType, 'MONORID_GREEN_DOT');
   assert.equal(result.cipherDot, 'GREEN');
   assert.ok(result.slLevel !== undefined);
   assert.ok(result.tpLevel !== undefined);
@@ -136,7 +136,7 @@ test('analyzeMarketCipherBStrategy executes SHORT on Red Dot in Overbought Zone 
   const result = analyzeMarketCipherBStrategy(candles, DEFAULT_CONFIG);
 
   assert.equal(result.action, 'SELL');
-  assert.equal(result.signalType, 'CIPHER_B_RED_DOT');
+  assert.equal(result.signalType, 'MONORID_RED_DOT');
   assert.equal(result.cipherDot, 'RED');
   assert.ok(result.slLevel !== undefined);
   assert.ok(result.tpLevel !== undefined);

@@ -233,11 +233,11 @@ export function aggregateCandles(candles: Candle[], factor: number): Candle[] {
  * wt1 = tci
  * wt2 = sma(wt1, 4)
  */
-export function calculateMarketCipherB(
+export function calculateMonoridIndicator(
   candles: Candle[],
   n1: number = 10,
   n2: number = 21
-): MarketCipherBResult {
+): MonoridWaveResult {
   if (candles.length === 0) {
     return { wt1: [], wt2: [] };
   }
@@ -290,7 +290,7 @@ export function calculateMarketCipherB(
  * 
  * - ALL OTHER CONDITIONS: Strictly HOLD.
  */
-export function analyzeMarketCipherBStrategy(
+export function analyzeMonoridStrategy(
   candles: Candle[],
   config: StrategyConfig = DEFAULT_CONFIG
 ): SignalResult {
@@ -321,7 +321,8 @@ export function analyzeMarketCipherBStrategy(
 
   const closes = candles.map((c) => c.close);
   const emaSeries = calculateEMA(closes, emaLength);
-  const { wt1, wt2 } = calculateMarketCipherB(candles, n1, n2);
+  const ema50Series = calculateEMA(closes, 50);
+  const { wt1, wt2 } = calculateMonoridIndicator(candles, n1, n2);
 
   const lastBar = candles.length - 1;
   const prevBar = lastBar - 1;
@@ -329,7 +330,9 @@ export function analyzeMarketCipherBStrategy(
 
   const currentPrice = closes[lastBar];
   const currentEMA = emaSeries[lastBar];
+  const currentEMA50 = ema50Series[lastBar];
   const prevEma5Bars = emaSeries[Math.max(0, lastBar - 5)];
+  const prevEma10Bars = emaSeries[Math.max(0, lastBar - 10)];
 
   const wt1Current = wt1[lastBar];
   const wt2Current = wt2[lastBar];
@@ -425,24 +428,24 @@ export function analyzeMarketCipherBStrategy(
   const isMarketBelowEMA = currentPrice < currentEMA;
 
   // EMA 200 Slope Guard: Prevents counter-trend entries into an actively curving trendline
-  const emaSlopeUp = currentEMA >= prevEma5Bars * 0.9997;
-  const emaSlopeDown = currentEMA <= prevEma5Bars * 1.0003;
+  const emaSlopeUp = currentEMA >= prevEma5Bars && currentEMA >= prevEma10Bars * 0.9999;
+  const emaSlopeDown = currentEMA <= prevEma5Bars && currentEMA <= prevEma10Bars * 1.0001;
 
   const buySignal = hasGreenDot && emaClearanceAbove && emaSlopeUp;
   const sellSignal = hasRedDot && emaClearanceBelow && emaSlopeDown;
 
   let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
-  let signalType: 'CIPHER_B_GREEN_DOT' | 'CIPHER_B_RED_DOT' | 'SMA_CROSS' | 'REVERSAL' | 'NONE' = 'NONE';
+  let signalType: 'MONORID_GREEN_DOT' | 'MONORID_RED_DOT' | 'CIPHER_B_GREEN_DOT' | 'CIPHER_B_RED_DOT' | 'SMA_CROSS' | 'REVERSAL' | 'NONE' = 'NONE';
   let eliminatedReason: string | undefined;
   let message = 'Monorid: Inactive / Neutral. Strictly waiting for Green Dot in OS (> EMA 200) or Red Dot in OB (< EMA 200)';
 
   if (buySignal) {
     action = 'BUY';
-    signalType = 'CIPHER_B_GREEN_DOT';
+    signalType = 'MONORID_GREEN_DOT';
     message = `Monorid: GREEN DOT in Oversold Zone (wt1: ${wt1Current.toFixed(1)}, wt2: ${wt2Current.toFixed(1)}) & Price ABOVE EMA 200 ($${currentPrice.toFixed(4)} > $${currentEMA.toFixed(4)})`;
   } else if (sellSignal) {
     action = 'SELL';
-    signalType = 'CIPHER_B_RED_DOT';
+    signalType = 'MONORID_RED_DOT';
     message = `Monorid: RED DOT in Overbought Zone (wt1: ${wt1Current.toFixed(1)}, wt2: ${wt2Current.toFixed(1)}) & Price BELOW EMA 200 ($${currentPrice.toFixed(4)} < $${currentEMA.toFixed(4)})`;
   } else if (hasGreenDot && isMarketAboveEMA && !emaSlopeUp) {
     eliminatedReason = `Adverse EMA 200 Slope: EMA 200 is curving downward ($${currentEMA.toFixed(4)} < $${prevEma5Bars.toFixed(4)}) for Long`;
@@ -621,12 +624,10 @@ export function analyzeMarketCipherBStrategy(
   };
 }
 
-// Official Monorid Quant Engine exports
-export const calculateMonoridIndicator = calculateMarketCipherB;
-export const analyzeMonoridStrategy = analyzeMarketCipherBStrategy;
-
-// Backward compatibility alias: analyzeCrudeOilStrategy now delegates directly to Monorid strategy
-export const analyzeCrudeOilStrategy = analyzeMarketCipherBStrategy;
+// Backward compatibility aliases
+export const calculateMarketCipherB = calculateMonoridIndicator;
+export const analyzeMarketCipherBStrategy = analyzeMonoridStrategy;
+export const analyzeCrudeOilStrategy = analyzeMonoridStrategy;
 
 /**
  * 100% Full Exit at 1:2 TP or SL

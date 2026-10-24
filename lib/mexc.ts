@@ -127,6 +127,7 @@ export interface MexcPosition {
   id: string;
   orderId?: string;
   positionId?: number | string;
+  externalOid?: string;
   symbol: string;
   groupName: string;
   botId: string;
@@ -397,12 +398,16 @@ export function deduplicateClosedPositions(positions: MexcPosition[]): MexcPosit
     let slHit = false;
 
     const hasSlTag = Boolean(
+      (incoming.externalOid && (incoming.externalOid.includes('STOP_LOSS') || (incoming.externalOid.includes('planorder') && realizedPnl < 0))) ||
+      (existing.externalOid && (existing.externalOid.includes('STOP_LOSS') || (existing.externalOid.includes('planorder') && realizedPnl < 0))) ||
       (incoming.orderId && incoming.orderId.includes('STOP_LOSS')) ||
       (incoming.id && incoming.id.includes('STOP_LOSS')) ||
       (existing.orderId && existing.orderId.includes('STOP_LOSS')) ||
       (existing.id && existing.id.includes('STOP_LOSS'))
     );
     const hasTpTag = Boolean(
+      (incoming.externalOid && (incoming.externalOid.includes('TAKE_PROFIT') || (incoming.externalOid.includes('planorder') && realizedPnl > 0))) ||
+      (existing.externalOid && (existing.externalOid.includes('TAKE_PROFIT') || (existing.externalOid.includes('planorder') && realizedPnl > 0))) ||
       (incoming.orderId && incoming.orderId.includes('TAKE_PROFIT')) ||
       (incoming.id && incoming.id.includes('TAKE_PROFIT')) ||
       (existing.orderId && existing.orderId.includes('TAKE_PROFIT')) ||
@@ -425,16 +430,10 @@ export function deduplicateClosedPositions(positions: MexcPosition[]): MexcPosit
     } else if (existing.closeReason === 'TP3' || incoming.closeReason === 'TP3') {
       closeReason = 'TP3';
       tp1Hit = true;
-    } else if ((reachedSl || hasSlTag) && realizedPnl < -0.0001) {
+    } else if (existing.closeReason === 'SL' || incoming.closeReason === 'SL' || ((reachedSl || hasSlTag) && realizedPnl < -0.0001)) {
       closeReason = 'SL';
       slHit = true;
-    } else if ((reachedTp || hasTpTag) && realizedPnl > 0.0001) {
-      closeReason = 'TP1';
-      tp1Hit = true;
-    } else if (existing.closeReason === 'SL' || incoming.closeReason === 'SL') {
-      closeReason = 'SL';
-      slHit = true;
-    } else if (existing.closeReason === 'TP1' || incoming.closeReason === 'TP1') {
+    } else if (existing.closeReason === 'TP1' || incoming.closeReason === 'TP1' || ((reachedTp || hasTpTag) && realizedPnl > 0.0001)) {
       closeReason = 'TP1';
       tp1Hit = true;
     } else {
@@ -443,6 +442,7 @@ export function deduplicateClosedPositions(positions: MexcPosition[]): MexcPosit
 
     const orderId = incoming.orderId || existing.orderId || (incoming.id.startsWith('mexc-') ? incoming.id.slice(5) : (existing.id.startsWith('mexc-') ? existing.id.slice(5) : undefined));
     const positionId = incoming.positionId || existing.positionId;
+    const externalOid = incoming.externalOid || existing.externalOid;
     const closedAt = (existing.closedAt && incoming.closedAt)
       ? Math.min(existing.closedAt, incoming.closedAt)
       : (existing.closedAt || incoming.closedAt || Date.now());
@@ -456,6 +456,7 @@ export function deduplicateClosedPositions(positions: MexcPosition[]): MexcPosit
       id: finalId,
       orderId,
       positionId,
+      externalOid,
       symbol: existing.symbol || incoming.symbol,
       groupName: preferredBot.groupName,
       botId: preferredBot.botId,
@@ -475,10 +476,10 @@ export function deduplicateClosedPositions(positions: MexcPosition[]): MexcPosit
       tp1Price,
       tp2Price,
       tp3Price,
-      tp1Hit: reachedTp,
+      tp1Hit,
       tp2Hit: existing.tp2Hit || incoming.tp2Hit,
       tp3Hit: existing.tp3Hit || incoming.tp3Hit,
-      slHit: reachedSl,
+      slHit,
       unrealizedPnl: 0,
       unrealizedPnlPct: 0,
       realizedPnl,
@@ -529,10 +530,12 @@ export function deduplicateClosedPositions(positions: MexcPosition[]): MexcPosit
         : (exitPrice >= slPrice * 0.9985 && slPrice > entryPrice);
 
       const hasSlTag = Boolean(
+        (pos.externalOid && (pos.externalOid.includes('STOP_LOSS') || (pos.externalOid.includes('planorder') && pnl < 0))) ||
         (pos.orderId && pos.orderId.includes('STOP_LOSS')) ||
         (pos.id && pos.id.includes('STOP_LOSS'))
       );
       const hasTpTag = Boolean(
+        (pos.externalOid && (pos.externalOid.includes('TAKE_PROFIT') || (pos.externalOid.includes('planorder') && pnl > 0))) ||
         (pos.orderId && pos.orderId.includes('TAKE_PROFIT')) ||
         (pos.id && pos.id.includes('TAKE_PROFIT'))
       );
@@ -542,20 +545,32 @@ export function deduplicateClosedPositions(positions: MexcPosition[]): MexcPosit
       let tp1Hit = false;
       let slHit = false;
 
-      if (pos.closeReason === 'MANUAL') {
+      if (Math.abs(pnl) <= 0.0001) {
         closeReason = 'MANUAL';
+        tp1Hit = false;
+        slHit = false;
+      } else if (pos.closeReason === 'MANUAL') {
+        if ((reachedSl || hasSlTag) && pnl < -0.0001) {
+          closeReason = 'SL';
+          slHit = true;
+        } else if ((reachedTp || hasTpTag) && pnl > 0.0001) {
+          closeReason = 'TP1';
+          tp1Hit = true;
+        } else {
+          closeReason = 'MANUAL';
+        }
       } else if (pos.closeReason === 'TP2') {
         closeReason = 'TP2';
         tp1Hit = true;
       } else if (pos.closeReason === 'TP3') {
         closeReason = 'TP3';
         tp1Hit = true;
-      } else if ((reachedTp || hasTpTag) && pnl > 0.0001) {
-        closeReason = 'TP1';
-        tp1Hit = true;
-      } else if ((reachedSl || hasSlTag) && pnl < -0.0001) {
+      } else if (pos.closeReason === 'SL' || ((reachedSl || hasSlTag) && pnl < -0.0001)) {
         closeReason = 'SL';
         slHit = true;
+      } else if (pos.closeReason === 'TP1' || ((reachedTp || hasTpTag) && pnl > 0.0001)) {
+        closeReason = 'TP1';
+        tp1Hit = true;
       } else {
         closeReason = 'MANUAL';
       }

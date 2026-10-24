@@ -244,6 +244,7 @@ export async function POST(req: NextRequest) {
                 id,
                 orderId,
                 positionId,
+                externalOid: extOid,
                 symbol: order.symbol,
                 groupName: 'MEXC Exchange History',
                 botId: 'mexc-exchange',
