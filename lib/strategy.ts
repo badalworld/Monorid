@@ -34,7 +34,9 @@ export interface StrategyConfig {
   osLevel2: number;      // -53 (Over Sold Level 2)
   emaLength: number;     // 200 (EMA 200 Trend Line)
   riskRewardRatio: number; // 2.0 (1:2 R:R)
-  slBufferPct: number;   // 0.003 (0.3% buffer beyond EMA 200)
+  slBufferPct: number;   // 0.005 (0.5% buffer beyond EMA 200)
+  minSlDistancePct?: number; // 0.015 (1.5% minimum distance from entry to prevent noise stopouts)
+  minTrendClearancePct?: number; // 0.0015 (0.15% minimum separation from EMA 200 to eliminate chop)
   equityRiskPct: number;
   minLeverage: number;
   maxLeverage: number;
@@ -61,7 +63,9 @@ export const DEFAULT_CONFIG: StrategyConfig = {
   osLevel2: -53,
   emaLength: 200,
   riskRewardRatio: 2.0, // Strictly 1:2 Risk to Reward
-  slBufferPct: 0.003,   // 0.3% safety buffer beyond EMA 200
+  slBufferPct: 0.005,   // 0.5% safety buffer beyond EMA 200
+  minSlDistancePct: 0.015, // 1.5% minimum safe distance from entry to prevent noise stopouts
+  minTrendClearancePct: 0.0015, // 0.15% minimum trend clearance from EMA 200 to eliminate chop
   equityRiskPct: 10,
   minLeverage: 6,
   maxLeverage: 8,
@@ -393,14 +397,17 @@ export function analyzeMarketCipherBStrategy(
   else if (hasRedDot) cipherDot = 'RED';
 
   // Strategy Execution Criteria:
-  // LONG: Green dot in oversold zone AND market > EMA 200
-  // SHORT: Red dot in overbought zone AND market < EMA 200
+  // LONG: Green dot in oversold zone AND market > EMA 200 with verified trend clearance (>= 0.15% above EMA)
+  // SHORT: Red dot in overbought zone AND market < EMA 200 with verified trend clearance (>= 0.15% below EMA)
   // ALL OTHER: HOLD
+  const minTrendClearancePct = config.minTrendClearancePct ?? 0.0015; // 0.15% minimum separation from EMA 200 to eliminate chop
+  const emaClearanceAbove = currentPrice > currentEMA && ((currentPrice - currentEMA) / currentEMA) >= minTrendClearancePct;
+  const emaClearanceBelow = currentPrice < currentEMA && ((currentEMA - currentPrice) / currentEMA) >= minTrendClearancePct;
   const isMarketAboveEMA = currentPrice > currentEMA;
   const isMarketBelowEMA = currentPrice < currentEMA;
 
-  const buySignal = hasGreenDot && isMarketAboveEMA;
-  const sellSignal = hasRedDot && isMarketBelowEMA;
+  const buySignal = hasGreenDot && emaClearanceAbove;
+  const sellSignal = hasRedDot && emaClearanceBelow;
 
   let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
   let signalType: 'CIPHER_B_GREEN_DOT' | 'CIPHER_B_RED_DOT' | 'SMA_CROSS' | 'REVERSAL' | 'NONE' = 'NONE';
@@ -415,6 +422,12 @@ export function analyzeMarketCipherBStrategy(
     action = 'SELL';
     signalType = 'CIPHER_B_RED_DOT';
     message = `Monorid: RED DOT in Overbought Zone (wt1: ${wt1Current.toFixed(1)}, wt2: ${wt2Current.toFixed(1)}) & Price BELOW EMA 200 ($${currentPrice.toFixed(4)} < $${currentEMA.toFixed(4)})`;
+  } else if (hasGreenDot && isMarketAboveEMA && !emaClearanceAbove) {
+    eliminatedReason = `Insufficient Trend Clearance: Price ($${currentPrice.toFixed(4)}) is hovering within 0.15% chop band of EMA 200 ($${currentEMA.toFixed(4)})`;
+    message = `Monorid: Long rejected — ${eliminatedReason}`;
+  } else if (hasRedDot && isMarketBelowEMA && !emaClearanceBelow) {
+    eliminatedReason = `Insufficient Trend Clearance: Price ($${currentPrice.toFixed(4)}) is hovering within 0.15% chop band of EMA 200 ($${currentEMA.toFixed(4)})`;
+    message = `Monorid: Short rejected — ${eliminatedReason}`;
   } else if (hasGreenDot && !isMarketAboveEMA) {
     eliminatedReason = `Counter-trend: Price below EMA 200 for Long ($${currentPrice.toFixed(4)} <= $${currentEMA.toFixed(4)})`;
     message = `Monorid: Long rejected — ${eliminatedReason}`;
@@ -430,7 +443,8 @@ export function analyzeMarketCipherBStrategy(
   }
 
   // ── Risk Management: Stop Loss strictly below/above EMA 200, Take Profit strictly 1:2 R:R ──
-  const slBufferPct = config.slBufferPct ?? 0.003; // 0.3% buffer beyond EMA 200
+  const slBufferPct = config.slBufferPct ?? 0.005; // 0.5% buffer beyond EMA 200
+  const minSlDistancePct = config.minSlDistancePct ?? 0.015; // 1.5% minimum safe distance from entry to prevent noise stopouts
   const rr = config.riskRewardRatio ?? 2.0;        // Strictly 1:2 R:R
 
   let slLevel: number | undefined;
@@ -441,10 +455,10 @@ export function analyzeMarketCipherBStrategy(
   let riskDist: number | undefined;
 
   if (action === 'BUY') {
-    // Stop loss strictly below EMA 200
+    // Stop loss strictly below EMA 200 with safety buffer, and at least 1.5% breathing room from entry
     const rawSl = currentEMA * (1 - slBufferPct);
-    // Ensure SL is strictly below entry price (at least 0.5% risk distance)
-    slLevel = Math.min(rawSl, currentPrice * 0.995);
+    const minSafeSl = currentPrice * (1 - minSlDistancePct);
+    slLevel = Math.min(rawSl, minSafeSl);
     riskDist = currentPrice - slLevel;
     tpLevel = currentPrice + riskDist * rr;
     tp1Level = tpLevel;
@@ -466,10 +480,10 @@ export function analyzeMarketCipherBStrategy(
       riskDist = undefined;
     }
   } else if (action === 'SELL') {
-    // Stop loss strictly above EMA 200
+    // Stop loss strictly above EMA 200 with safety buffer, and at least 1.5% breathing room from entry
     const rawSl = currentEMA * (1 + slBufferPct);
-    // Ensure SL is strictly above entry price (at least 0.5% risk distance)
-    slLevel = Math.max(rawSl, currentPrice * 1.005);
+    const minSafeSl = currentPrice * (1 + minSlDistancePct);
+    slLevel = Math.max(rawSl, minSafeSl);
     riskDist = slLevel - currentPrice;
     tpLevel = currentPrice - riskDist * rr;
     tp1Level = tpLevel;

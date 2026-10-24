@@ -1272,17 +1272,17 @@ export default function Home() {
     // Strict validation: TP must be favorable and SL must be adverse compared to entry
     if (side === 'BUY') {
       if (tpPrice <= tradePrice) {
-        tpPrice = Number((tradePrice + Math.max(riskDist * (config.riskRewardRatio || 2.0), Math.pow(10, -decimals))).toFixed(decimals));
+        tpPrice = Number((tradePrice + Math.max(riskDist * (config.riskRewardRatio || 2.0), tradePrice * 0.03)).toFixed(decimals));
       }
       if (slPrice >= tradePrice) {
-        slPrice = Number((tradePrice - Math.max(riskDist, Math.pow(10, -decimals))).toFixed(decimals));
+        slPrice = Number((tradePrice - Math.max(riskDist, tradePrice * 0.015)).toFixed(decimals));
       }
     } else {
       if (tpPrice >= tradePrice) {
-        tpPrice = Number(Math.max(0, tradePrice - Math.max(riskDist * (config.riskRewardRatio || 2.0), Math.pow(10, -decimals))).toFixed(decimals));
+        tpPrice = Number(Math.max(0, tradePrice - Math.max(riskDist * (config.riskRewardRatio || 2.0), tradePrice * 0.03)).toFixed(decimals));
       }
       if (slPrice <= tradePrice) {
-        slPrice = Number((tradePrice + Math.max(riskDist, Math.pow(10, -decimals))).toFixed(decimals));
+        slPrice = Number((tradePrice + Math.max(riskDist, tradePrice * 0.015)).toFixed(decimals));
       }
     }
 
