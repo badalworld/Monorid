@@ -67,13 +67,15 @@ export function PositionsView({
   const winRate = closedPositions.length > 0 ? (winCount / closedPositions.length) * 100 : 0;
 
   const exportClosedTrades = () => {
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(closedPositions, null, 2));
+    const blob = new Blob([JSON.stringify(closedPositions, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
     const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('href', url);
     downloadAnchor.setAttribute('download', `monorid-trade-history-${Date.now()}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   return (

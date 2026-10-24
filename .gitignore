@@ -20,4 +20,7 @@ all_historical_orders.json
 deploy_payload.json
 scratch_payload.json
 service_types.json
+data/.tmp-*
+data/.write-test-*
+
 

@@ -79,10 +79,12 @@ export const DEFAULT_CONFIG: StrategyConfig = {
   useEmaTrendFilter: true,
 };
 
-export interface MarketCipherBResult {
+export interface MonoridWaveResult {
   wt1: number[];
   wt2: number[];
 }
+
+export type MarketCipherBResult = MonoridWaveResult;
 
 export interface SignalResult {
   action: 'BUY' | 'SELL' | 'HOLD';
@@ -96,10 +98,11 @@ export interface SignalResult {
   rsi: number; // Populated with WT1 for backwards compatibility with UI
   sma: number; // Populated with EMA 200 for backwards compatibility with UI
   ema: number; // EMA 200
-  wt1: number; // Market Cipher B Wave 1
-  wt2: number; // Market Cipher B Wave 2
+  wt1: number; // Monorid Wave 1
+  wt2: number; // Monorid Wave 2
+  monoridDot?: 'GREEN' | 'RED' | 'NONE';
   cipherDot: 'GREEN' | 'RED' | 'NONE';
-  signalType: 'CIPHER_B_GREEN_DOT' | 'CIPHER_B_RED_DOT' | 'SMA_CROSS' | 'REVERSAL' | 'NONE';
+  signalType: 'MONORID_GREEN_DOT' | 'MONORID_RED_DOT' | 'CIPHER_B_GREEN_DOT' | 'CIPHER_B_RED_DOT' | 'SMA_CROSS' | 'REVERSAL' | 'NONE';
   candleTiming?: 'SAME_CANDLE' | 'COMPLETED_CANDLE' | 'NONE';
   recommendedLeverage: number;
   confidence: number;
@@ -212,9 +215,9 @@ export function aggregateCandles(candles: Candle[], factor: number): Candle[] {
 }
 
 /**
- * Market Cipher B Free Version Calculation
+ * Monorid Indicator Calculation (Copyright and developed by Trading Lifestyle Quant)
  * 
- * Pine Script:
+ * Wave 1 & Wave 2 Oscillators:
  * ap = hlc3
  * esa = ema(ap, n1)
  * d = ema(abs(ap - esa), n1)
@@ -261,18 +264,18 @@ export function calculateMarketCipherB(
 }
 
 /**
- * Full Market Cipher B Trading Strategy Analysis
+ * Full Monorid Trading Strategy Analysis (Copyright and developed by Trading Lifestyle Quant)
  * 
  * Rules:
  * - LONG:
- *   1. Market Cipher B makes a Green Dot in Oversold Zone (wt1 crosses above wt2 and wt2/wt1 <= -53)
+ *   1. Monorid makes a Green Dot in Oversold Zone (wt1 crosses above wt2 and wt2/wt1 <= -53)
  *   2. Market price is above EMA 200 (close > EMA 200)
  *   -> Execute LONG
  *   -> Stop Loss strictly below EMA 200 (with safety buffer)
  *   -> Take Profit strictly 1:2 Risk to Reward (R:R = 2.0)
  * 
  * - SHORT:
- *   1. Market Cipher B makes a Red Dot in Overbought Zone (wt1 crosses below wt2 and wt2/wt1 >= 53)
+ *   1. Monorid makes a Red Dot in Overbought Zone (wt1 crosses below wt2 and wt2/wt1 >= 53)
  *   2. Market price is below EMA 200 (close < EMA 200)
  *   -> Execute SHORT
  *   -> Stop Loss strictly above EMA 200 (with safety buffer)
@@ -299,11 +302,12 @@ export function analyzeMarketCipherBStrategy(
       ema: 0,
       wt1: 0,
       wt2: 0,
+      monoridDot: 'NONE',
       cipherDot: 'NONE',
       signalType: 'NONE',
       recommendedLeverage: config.minLeverage || 6,
       confidence: 0,
-      message: `Insufficient bars (${candles.length}/${minBars}) for Market Cipher B + EMA 200`,
+      message: `Insufficient bars (${candles.length}/${minBars}) for Monorid + EMA 200`,
     };
   }
 
@@ -501,7 +505,7 @@ export function analyzeMarketCipherBStrategy(
   // Confidence calculation (Trade executes ONLY when confidence >= minConfidence, e.g. 80%)
   let confidence = 0;
   if (action !== 'HOLD') {
-    let score = 80; // High conviction base score for confirmed Cipher B + EMA 200 trigger
+    let score = 80; // High conviction base score for confirmed Monorid + EMA 200 trigger
 
     // Extreme oversold / overbought bonus (<= -60 or >= 60)
     if (action === 'BUY' && (wt2Current <= -60 || wt1Current <= -60 || wt2Prev <= -60)) {
@@ -539,6 +543,7 @@ export function analyzeMarketCipherBStrategy(
     ema: Number(currentEMA.toFixed(4)),
     wt1: Number(wt1Current.toFixed(2)),
     wt2: Number(wt2Current.toFixed(2)),
+    monoridDot: cipherDot,
     cipherDot,
     signalType,
     candleTiming,

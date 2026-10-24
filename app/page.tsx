@@ -67,6 +67,7 @@ export default function Home() {
   const [logs, setLogs] = useState<TradeLog[]>([]);
   const [activeSignals, setActiveSignals] = useState<ActiveSignalItem[]>([]);
   const [isScanningBatch, setIsScanningBatch] = useState<boolean>(false);
+  const [lastScanDurationMs, setLastScanDurationMs] = useState<number>(1800);
   const executingSymbolsRef = useRef<Set<string>>(new Set());
   const lastAttemptRef = useRef<Map<string, number>>(new Map());
   const executedTpsRef = useRef<Set<string>>(new Set());
@@ -139,12 +140,16 @@ export default function Home() {
           if (serverLogs.length > 0) {
             setLogs((prev) => {
               const seenIds = new Set<string>();
+              const seenSigs = new Set<string>();
               const merged: TradeLog[] = [];
               for (const l of [...prev, ...serverLogs]) {
-                if (l && l.id && !seenIds.has(l.id)) {
-                  seenIds.add(l.id);
-                  merged.push(l);
-                }
+                if (!l) continue;
+                const sig = `${l.timestamp || 0}|${l.symbol || ''}|${l.type || ''}|${(l.message || '').slice(0, 50)}`;
+                const id = l.id || `log-${sig}`;
+                if (seenIds.has(id) || seenSigs.has(sig)) continue;
+                seenIds.add(id);
+                seenSigs.add(sig);
+                merged.push({ ...l, id });
               }
               merged.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
               return merged.slice(0, 1000);
@@ -450,7 +455,14 @@ export default function Home() {
     };
     setLogs((prev) => [newLog, ...prev.slice(0, 999)]);
     pendingLogsRef.current.push(newLog);
-    if (pendingLogsRef.current.length >= 10) {
+    if (
+      pendingLogsRef.current.length >= 10 ||
+      entry.type === 'TRADE_EXECUTED' ||
+      entry.type === 'TP_HIT' ||
+      entry.type === 'SL_HIT' ||
+      entry.type === 'MONORID_RUNNING' ||
+      entry.type === 'MONORID_STOP'
+    ) {
       flushLogsToServer();
     }
   }, [flushLogsToServer]);
@@ -592,11 +604,11 @@ export default function Home() {
       let scannedSoFar = 0;
 
       const groupEntries = Array.from(groupMap.entries());
+      const scanStartTime = Date.now();
 
-      for (let gIdx = 0; gIdx < groupEntries.length; gIdx++) {
-        const [groupName, groupTickers] = groupEntries[gIdx];
+      // High-Throughput Parallel Execution: scan all groups concurrently across worker threads
+      const groupScanPromises = groupEntries.map(async ([groupName, groupTickers], gIdx) => {
         const groupSymbols = groupTickers.map((t) => t.symbol);
-
         try {
           const res = await fetch('/api/mexc/scan', {
             method: 'POST',
@@ -606,89 +618,98 @@ export default function Home() {
 
           if (res.ok) {
             const data = await res.json();
-            if (data && Array.isArray(data.results)) {
-              let groupOpportunitiesCount = 0;
-              for (const item of data.results) {
-                if (item.success && item.analysis) {
-                  allAccumulatedResults[item.symbol] = item.analysis;
-                  const t = groupTickers.find((tick) => tick.symbol === item.symbol);
-
-                  if (item.analysis.action === 'BUY' || item.analysis.action === 'SELL') {
-                    groupOpportunitiesCount++;
-                    const tpTarget = item.analysis.tpLevel ?? item.analysis.tp1Level ?? (item.analysis.action === 'BUY' ? (item.analysis.entryPrice || 100) * 1.03 : (item.analysis.entryPrice || 100) * 0.97);
-                    const slTarget = item.analysis.slLevel ?? (item.analysis.action === 'BUY' ? (item.analysis.entryPrice || 100) * 0.985 : (item.analysis.entryPrice || 100) * 1.015);
-
-                    allAccumulatedSignals.push({
-                      id: `sig-${item.symbol}-${Date.now()}`,
-                      symbol: item.symbol,
-                      groupName,
-                      side: item.analysis.action,
-                      price: item.analysis.entryPrice || t?.lastPrice || 100,
-                      confidence: item.analysis.confidence ?? 0,
-                      leverage: item.analysis.recommendedLeverage || 7,
-                      sl: slTarget,
-                      tp1: tpTarget,
-                      tp2: tpTarget,
-                      tp3: tpTarget,
-                      rsi: item.analysis.rsi || 50,
-                      timestamp: Date.now(),
-                      status: 'ACTIVE',
-                      retryCount: 0,
-                      analysis: item.analysis,
-                    });
-
-                    // Comprehensive Event Logging: New Opportunity Detected
-                    const oppKey = `${item.symbol}-${item.analysis.action}-${Math.floor(Date.now() / 60000)}`;
-                    if (!loggedOpportunitiesRef.current.has(oppKey)) {
-                      loggedOpportunitiesRef.current.add(oppKey);
-                      addLog({
-                        groupName,
-                        symbol: item.symbol,
-                        type: 'NEW_OPPORTUNITY',
-                        side: item.analysis.action === 'BUY' ? 'LONG' : 'SHORT',
-                        price: item.analysis.entryPrice || t?.lastPrice || 0,
-                        message: `New Opportunity: ${item.symbol} (${item.analysis.action === 'BUY' ? 'LONG' : 'SHORT'}) | Entry: $${formatPrice(item.analysis.entryPrice || 0)} | EMA 200: $${formatPrice(item.analysis.ema)} | WT1: ${item.analysis.wt1.toFixed(1)} | WT2: ${item.analysis.wt2.toFixed(1)} (${item.analysis.cipherDot} Dot) | SL: $${formatPrice(slTarget)} (EMA 200) | 1:2 TP: $${formatPrice(tpTarget)} | Conviction: ${item.analysis.confidence}%.`,
-                      });
-                    }
-                  } else if (item.analysis.eliminatedReason) {
-                    totalEliminated++;
-                    // Comprehensive Event Logging: Eliminated Opportunity (filtered by technical rule)
-                    const elimKey = `${item.symbol}-${item.analysis.eliminatedReason.substring(0, 25)}-${Math.floor(Date.now() / 120000)}`;
-                    if (!loggedEliminatedRef.current.has(elimKey)) {
-                      loggedEliminatedRef.current.add(elimKey);
-                      addLog({
-                        groupName,
-                        symbol: item.symbol,
-                        type: 'ELIMINATED_OPPORTUNITY',
-                        side: 'INFO',
-                        price: item.analysis.entryPrice || t?.lastPrice || 0,
-                        message: `Eliminated Opportunity: ${item.symbol} rejected — ${item.analysis.eliminatedReason}.`,
-                      });
-                    }
-                  }
-                }
-              }
-
-              scannedSoFar += groupSymbols.length;
-
-              // Comprehensive Event Logging: Market scan progress update
-              addLog({
-                groupName,
-                symbol: 'MARKET_SCAN',
-                type: 'MARKET_SCAN',
-                side: 'INFO',
-                price: 0,
-                message: `Market scan progress: Group ${gIdx + 1}/${groupEntries.length} (${groupName}) completed — ${scannedSoFar}/${allSymbols.length} contracts scanned (${groupOpportunitiesCount} opportunities found).`,
-              });
-
-              // Progressive state update so UI updates immediately as each group completes
-              setScanResults((prev) => ({ ...prev, ...allAccumulatedResults }));
-            }
+            return { success: true, groupName, groupTickers, groupSymbols, data, gIdx };
           }
         } catch (groupErr) {
           console.warn(`[Scanner] Group scan failed for ${groupName}:`, groupErr);
         }
+        return { success: false, groupName, groupTickers, groupSymbols, data: null, gIdx };
+      });
+
+      const groupResponses = await Promise.all(groupScanPromises);
+      const scanDuration = Date.now() - scanStartTime;
+      setLastScanDurationMs(scanDuration);
+
+      for (const grp of groupResponses) {
+        if (!grp.success || !grp.data || !Array.isArray(grp.data.results)) continue;
+        let groupOpportunitiesCount = 0;
+
+        for (const item of grp.data.results) {
+          if (item.success && item.analysis) {
+            allAccumulatedResults[item.symbol] = item.analysis;
+            const t = grp.groupTickers.find((tick) => tick.symbol === item.symbol);
+
+            if (item.analysis.action === 'BUY' || item.analysis.action === 'SELL') {
+              groupOpportunitiesCount++;
+              const tpTarget = item.analysis.tpLevel ?? item.analysis.tp1Level ?? (item.analysis.action === 'BUY' ? (item.analysis.entryPrice || 100) * 1.03 : (item.analysis.entryPrice || 100) * 0.97);
+              const slTarget = item.analysis.slLevel ?? (item.analysis.action === 'BUY' ? (item.analysis.entryPrice || 100) * 0.985 : (item.analysis.entryPrice || 100) * 1.015);
+
+              allAccumulatedSignals.push({
+                id: `sig-${item.symbol}-${Date.now()}`,
+                symbol: item.symbol,
+                groupName: grp.groupName,
+                side: item.analysis.action,
+                price: item.analysis.entryPrice || t?.lastPrice || 100,
+                confidence: item.analysis.confidence ?? 0,
+                leverage: item.analysis.recommendedLeverage || 7,
+                sl: slTarget,
+                tp1: tpTarget,
+                tp2: tpTarget,
+                tp3: tpTarget,
+                rsi: item.analysis.rsi || 50,
+                timestamp: Date.now(),
+                status: 'ACTIVE',
+                retryCount: 0,
+                analysis: item.analysis,
+              });
+
+              // Comprehensive Event Logging: New Opportunity Detected
+              const oppKey = `${item.symbol}-${item.analysis.action}-${Math.floor(Date.now() / 60000)}`;
+              if (!loggedOpportunitiesRef.current.has(oppKey)) {
+                loggedOpportunitiesRef.current.add(oppKey);
+                addLog({
+                  groupName: grp.groupName,
+                  symbol: item.symbol,
+                  type: 'NEW_OPPORTUNITY',
+                  side: item.analysis.action === 'BUY' ? 'LONG' : 'SHORT',
+                  price: item.analysis.entryPrice || t?.lastPrice || 0,
+                  message: `New Opportunity: ${item.symbol} (${item.analysis.action === 'BUY' ? 'LONG' : 'SHORT'}) | Entry: $${formatPrice(item.analysis.entryPrice || 0)} | EMA 200: $${formatPrice(item.analysis.ema)} | WT1: ${item.analysis.wt1.toFixed(1)} | WT2: ${item.analysis.wt2.toFixed(1)} (${(item.analysis.monoridDot || item.analysis.cipherDot)} Dot) | SL: $${formatPrice(slTarget)} (EMA 200) | 1:2 TP: $${formatPrice(tpTarget)} | Conviction: ${item.analysis.confidence}%.`,
+                });
+              }
+            } else if (item.analysis.eliminatedReason) {
+              totalEliminated++;
+              // Comprehensive Event Logging: Eliminated Opportunity (filtered by technical rule)
+              const elimKey = `${item.symbol}-${item.analysis.eliminatedReason.substring(0, 25)}-${Math.floor(Date.now() / 120000)}`;
+              if (!loggedEliminatedRef.current.has(elimKey)) {
+                loggedEliminatedRef.current.add(elimKey);
+                addLog({
+                  groupName: grp.groupName,
+                  symbol: item.symbol,
+                  type: 'ELIMINATED_OPPORTUNITY',
+                  side: 'INFO',
+                  price: item.analysis.entryPrice || t?.lastPrice || 0,
+                  message: `Eliminated Opportunity: ${item.symbol} rejected — ${item.analysis.eliminatedReason}.`,
+                });
+              }
+            }
+          }
+        }
+
+        scannedSoFar += grp.groupSymbols.length;
+
+        // Comprehensive Event Logging: Market scan progress update
+        addLog({
+          groupName: grp.groupName,
+          symbol: 'MARKET_SCAN',
+          type: 'MARKET_SCAN',
+          side: 'INFO',
+          price: 0,
+          message: `Market scan progress: Group ${grp.gIdx + 1}/${groupEntries.length} (${grp.groupName}) completed — ${scannedSoFar}/${allSymbols.length} contracts scanned (${groupOpportunitiesCount} opportunities found).`,
+        });
       }
+
+      // Update state with all accumulated results
+      setScanResults((prev) => ({ ...prev, ...allAccumulatedResults }));
 
       // Comprehensive Event Logging: Market scan cycle completed
       addLog({
@@ -878,6 +899,29 @@ export default function Home() {
     }
   };
 
+  // Sweep and cancel all pending orders (limit orders, plan orders, stop loss orders) for a symbol on MEXC
+  const executeCancelPendingOrders = useCallback(async (symbol: string) => {
+    if (!apiKey || !secretKey) return;
+    try {
+      const res = await fetch('/api/mexc/order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'cancel_all',
+          symbol,
+          apiKey,
+          secretKey,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data?.success) {
+        console.log(`[MEXC] Cancelled all pending orders for ${symbol}`);
+      }
+    } catch (err) {
+      console.warn(`[MEXC] Failed to cancel pending orders for ${symbol}:`, err);
+    }
+  }, [apiKey, secretKey]);
+
   const executeMexcClose = async (
     symbol: string,
     positionType: 1 | 2,
@@ -897,13 +941,16 @@ export default function Home() {
         }),
       });
       const data = await res.json();
+      // Ensure all plan orders, trigger orders, and open orders are also cancelled immediately
+      executeCancelPendingOrders(symbol);
       if (data.success) {
-        console.log('[MEXC] Position closed:', symbol);
+        console.log('[MEXC] Position closed & pending orders cancelled:', symbol);
       } else {
         console.warn('[MEXC] Close failed:', data.message);
       }
       return data;
     } catch (err) {
+      executeCancelPendingOrders(symbol);
       console.error('[MEXC] Close error:', err);
       return { success: false, message: 'Network error' };
     }
@@ -930,6 +977,14 @@ export default function Home() {
             if (p.symbol !== update.symbol || p.status !== 'OPEN') return p;
 
             const newPrice = update.price;
+            // Defensive validation: discard missing, zero, negative, or corrupt price ticks
+            if (!newPrice || typeof newPrice !== 'number' || isNaN(newPrice) || newPrice <= 0) return p;
+            // Discard single-tick flash crash / flash spike anomalies (>90% drop or >1000% spike)
+            if (p.entryPrice > 0 && (newPrice < p.entryPrice * 0.1 || newPrice > p.entryPrice * 10)) {
+              console.warn(`[Tick] Discarding anomalous price tick for ${p.symbol}: ${newPrice} vs entry ${p.entryPrice}`);
+              return p;
+            }
+
             const isLong = p.side === 'LONG';
             const pnlPct = isLong
               ? ((newPrice - p.entryPrice) / p.entryPrice) * p.leverage * 100
@@ -984,6 +1039,7 @@ export default function Home() {
 
               if (apiKey && secretKey) {
                 executeMexcClose(p.symbol, isLong ? 1 : 2, p.contractVol);
+                executeCancelPendingOrders(p.symbol);
               }
               updatedPos.closedVol = p.contractVol;
               persistTradesToServer(updatedPos, 'append');
@@ -1033,6 +1089,7 @@ export default function Home() {
               if (apiKey && secretKey) {
                 const remaining = Math.max(0, p.contractVol - updatedPos.closedVol);
                 if (remaining >= 1) executeMexcClose(p.symbol, isLong ? 1 : 2, remaining);
+                executeCancelPendingOrders(p.symbol);
               }
               updatedPos.closedVol = p.contractVol;
               persistTradesToServer(updatedPos, 'append');
@@ -1586,6 +1643,12 @@ export default function Home() {
         const posPayload = await posRes.json().catch(() => ({}));
         const histPayload = await histRes.json().catch(() => ({}));
 
+        // Defensive check: if positions endpoint failed or returned error, abort sync to prevent wiping active positions
+        if (!posPayload || posPayload.success === false) {
+          console.warn('[Sync] Position sync paused — MEXC API returned non-success:', posPayload?.message);
+          return;
+        }
+
         const raw = Array.isArray(posPayload?.data) ? posPayload.data : [];
         const historyOrders = Array.isArray(histPayload?.data) ? histPayload.data : [];
 
@@ -1634,10 +1697,11 @@ export default function Home() {
                 continue;
               }
 
+              // Only match close orders that occurred AFTER the position was opened
               const hasMatchingOrder = validCloseOrders.some((o: any) =>
                 (p.orderId && String(o.orderId) === String(p.orderId)) ||
                 (p.positionId && String(o.positionId) === String(p.positionId)) ||
-                o.symbol === p.symbol
+                (o.symbol === p.symbol && o.createTime && p.createdAt && o.createTime >= p.createdAt - 5000)
               );
 
               if (!hasMatchingOrder) {
@@ -1657,6 +1721,7 @@ export default function Home() {
                 // Discard/revert it completely to prevent phantom closed trades and false SL penalties.
                 if (!reachedSl && !reachedTp) {
                   console.log(`[Sync] Discarding unfilled/cancelled position on ${p.symbol} (no exchange fill, TP/SL never reached)`);
+                  executeCancelPendingOrders(p.symbol);
                   if (p.botId) {
                     setBots((prevBots) =>
                       prevBots.map((b) => (b.id === p.botId ? { ...b, status: 'ACTIVE', currentSymbol: undefined } : b))
@@ -1668,6 +1733,9 @@ export default function Home() {
                 const closeReason: 'TP1' | 'TP2' | 'TP3' | 'SL' | 'MANUAL' = reachedTp ? 'TP1' : 'SL';
                 const estFee = Number(((p.equityUsed * p.leverage) * 0.0008).toFixed(4));
                 const finalPnl = p.realizedPnl || p.unrealizedPnl || 0;
+
+                // Ensure all pending/plan orders on exchange are cancelled upon closing
+                executeCancelPendingOrders(p.symbol);
 
                 fallbackClosed.push({
                   ...p,
@@ -1698,12 +1766,12 @@ export default function Home() {
             const pnl = feeInfo.realizedPnl;
             const pnlRate = Number(order.pnlRate) || 0;
 
-            // Look for matching local position to preserve original bot attribution and TP/SL target levels
+            // Look for matching local position created around or before order completion
             const localMatch = prev.find((p) =>
               (p.orderId && String(p.orderId) === String(order.orderId)) ||
               (p.positionId && String(p.positionId) === String(order.positionId)) ||
               (p.symbol === order.symbol && Math.abs((p.closedAt || p.createdAt || 0) - (order.updateTime || order.createTime || 0)) <= 600000) ||
-              (p.symbol === order.symbol && p.status === 'OPEN')
+              (p.symbol === order.symbol && p.status === 'OPEN' && order.createTime && p.createdAt && order.createTime >= p.createdAt - 5000)
             );
 
             const matchedTicker = tickersRef.current.find((t) => t.symbol === order.symbol);
@@ -1746,8 +1814,12 @@ export default function Home() {
               closeReason = 'SL';
               hitSl = true;
             } else {
-              closeReason = 'MANUAL';
+              // Enforce that automated exits are strictly TP or SL based on realized outcome
+              closeReason = pnl >= 0 ? 'TP1' : 'SL';
             }
+
+            // Always cancel all remaining plan/stop/trigger orders for this symbol upon close confirmation
+            executeCancelPendingOrders(order.symbol);
 
             // Only trigger cooldown if trade was an actual verified Stop Loss hit
             if (hitSl && reachedSl && order.createTime && (Date.now() - order.createTime < 30 * 60 * 1000)) {
@@ -1930,11 +2002,11 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiKey, secretKey]);
 
-  // 5. Background Automated 24/7 Scanning Loop - scans every 30s for rapid same-candle detection
+  // 5. Background Automated 24/7 Scanning Loop - rapid 12s cycle for maximum opportunity detection
   useEffect(() => {
     const scanInterval = setInterval(() => {
       runScanner();
-    }, 30000); // 30 seconds: allows immediate same-candle entry as soon as signal forms
+    }, 12000); // 12 seconds: ultra-fast cycle catching 1M candle signals within seconds of formation
 
     return () => {
       clearInterval(scanInterval);
@@ -1990,12 +2062,13 @@ export default function Home() {
             pnl: p.unrealizedPnl,
             message: `Manually closed ${p.symbol} (${p.side}) position. Final P&L: $${p.unrealizedPnl.toFixed(2)}.`,
           });
-          // Execute real close on MEXC (remaining contracts)
+          // Execute real close on MEXC (remaining contracts) and cancel all pending orders
           if (apiKey && secretKey) {
             const remaining = p.contractVol - p.closedVol;
             if (remaining >= 1) {
               executeMexcClose(p.symbol, p.side === 'LONG' ? 1 : 2, remaining);
             }
+            executeCancelPendingOrders(p.symbol);
           }
           const totalRealizedPnl = (p.realizedPnl || 0) + p.unrealizedPnl;
           const realizedPnlPct = p.equityUsed > 0 ? (totalRealizedPnl / p.equityUsed) * 100 : 0;
@@ -2032,6 +2105,7 @@ export default function Home() {
           if (remaining >= 1) {
             executeMexcClose(p.symbol, p.side === 'LONG' ? 1 : 2, remaining);
           }
+          executeCancelPendingOrders(p.symbol);
         });
     }
     const flattened: MexcPosition[] = [];
@@ -2256,6 +2330,7 @@ export default function Home() {
                   isAutoTrading={isAutoTrading}
                   totalPnl={Number(totalBotPnl.toFixed(2))}
                   openPositionsCount={openPositionsCount}
+                  scanSpeedMs={lastScanDurationMs}
                   onOpenLiveTrades={() => {
                     setViewBotId(null);
                     setActiveTab('positions');
@@ -2303,6 +2378,7 @@ export default function Home() {
             onViewChart={handleOpenChart}
             onRefreshScan={() => runScanner()}
             isScanningBatch={isScanningBatch}
+            scanDurationMs={lastScanDurationMs}
             nonActivatedContracts={nonActivatedContracts}
             lossCooldowns={lossCooldowns}
           />

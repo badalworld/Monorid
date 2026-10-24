@@ -106,13 +106,15 @@ export function TradeLogsView({ logs, onClearLogs }: TradeLogsViewProps) {
   }, [logs, selectedCategory, selectedGroup, searchTerm]);
 
   const exportLogs = () => {
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(logs, null, 2));
+    const blob = new Blob([JSON.stringify(logs, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
     const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('href', url);
     downloadAnchor.setAttribute('download', `monorid-trade-logs-${Date.now()}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   return (

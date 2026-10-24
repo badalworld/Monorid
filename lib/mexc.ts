@@ -1506,7 +1506,40 @@ export async function fetchMexcPositionMode(
 }
 
 /**
- * Close a position (market order) — numeric close sides: 4 = close long, 2 = close short
+ * Cancel ALL pending orders for a symbol on MEXC:
+ * 1. Open limit/market orders (/api/v1/private/order/cancel_all)
+ * 2. Plan/Trigger orders - Take Profit and Stop Loss triggers (/api/v1/private/planorder/cancel_all)
+ * 3. Stop orders (/api/v1/private/stoporder/cancel_all)
+ */
+export async function cancelAllPendingOrders(
+  apiKey: string,
+  secretKey: string,
+  symbol: string
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    const results = await Promise.allSettled([
+      mexcAuthRequest(apiKey, secretKey, 'POST', '/api/v1/private/order/cancel_all', { symbol }),
+      mexcAuthRequest(apiKey, secretKey, 'POST', '/api/v1/private/planorder/cancel_all', { symbol }),
+      mexcAuthRequest(apiKey, secretKey, 'POST', '/api/v1/private/stoporder/cancel_all', { symbol }),
+    ]);
+
+    const errors = results
+      .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+      .map((r) => r.reason?.message || 'Cancel failed');
+
+    if (errors.length > 0) {
+      console.warn(`[MEXC] Partial cancellation warning for ${symbol}:`, errors.join(', '));
+    }
+    return { success: true };
+  } catch (err: any) {
+    console.warn(`[MEXC] Error cancelling pending orders for ${symbol}:`, err?.message);
+    return { success: false, message: err?.message };
+  }
+}
+
+/**
+ * Close a position (market order) — numeric close sides: 4 = close long, 2 = close short.
+ * Automatically cancels all remaining plan orders, trigger orders, and open orders for the symbol.
  */
 export async function closeMexcPosition(
   apiKey: string,
@@ -1523,6 +1556,9 @@ export async function closeMexcPosition(
       vol: quantity,
     });
 
+    // Always sweep and cancel any remaining pending/plan/stop orders for this symbol
+    await cancelAllPendingOrders(apiKey, secretKey, symbol).catch(() => {});
+
     if (result && result.success) {
       return { success: true, orderId: result.data?.orderId };
     }
@@ -1532,6 +1568,8 @@ export async function closeMexcPosition(
       message: result?.message || 'Close failed',
     };
   } catch (err: any) {
+    // Attempt pending orders cleanup even on error
+    await cancelAllPendingOrders(apiKey, secretKey, symbol).catch(() => {});
     return {
       success: false,
       message: err.message || 'Network error',

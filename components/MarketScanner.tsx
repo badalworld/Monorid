@@ -23,6 +23,7 @@ interface MarketScannerProps {
   onViewChart: (symbol: string) => void;
   onRefreshScan: () => void;
   isScanningBatch: boolean;
+  scanDurationMs?: number;
   nonActivatedContracts?: Set<string>;
   lossCooldowns?: Map<string, number>;
 }
@@ -43,6 +44,7 @@ export function MarketScanner({
   onViewChart,
   onRefreshScan,
   isScanningBatch,
+  scanDurationMs,
   nonActivatedContracts,
   lossCooldowns,
 }: MarketScannerProps) {
@@ -60,13 +62,17 @@ export function MarketScanner({
       <div className="rounded-xl border border-cyan-950/70 bg-[#060a14]/90 p-4 backdrop-blur-md">
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 pb-3 border-b border-slate-800">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Scan className="w-5 h-5 text-cyan-400" />
               <h2 className="text-base font-mono font-bold text-white tracking-wide">
                 AUTOMATED 1M MARKET SCANNER (90 FUTURES CONTRACTS)
               </h2>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-700/60 font-semibold">
                 15 ASSETS / GROUP • 6 GROUPS
+              </span>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-600/50 flex items-center gap-1 font-semibold">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                PARALLEL ENGINE {scanDurationMs ? `(${(scanDurationMs / 1000).toFixed(1)}s)` : '(<2s)'}
               </span>
             </div>
           </div>
@@ -204,13 +210,13 @@ export function MarketScanner({
                 <div className="flex justify-between items-center text-slate-300">
                   <span className="text-slate-400">Monorid Dot:</span>
                   <span className={`font-bold px-1.5 py-0.2 rounded text-[10px] ${
-                    analysis?.cipherDot === 'GREEN'
+                    (analysis?.monoridDot || analysis?.cipherDot) === 'GREEN'
                       ? 'bg-emerald-950 border border-emerald-500 text-emerald-300 animate-pulse'
-                      : analysis?.cipherDot === 'RED'
+                      : (analysis?.monoridDot || analysis?.cipherDot) === 'RED'
                       ? 'bg-rose-950 border border-rose-500 text-rose-300 animate-pulse'
                       : 'bg-slate-900 text-slate-400'
                   }`}>
-                    {analysis?.cipherDot === 'GREEN' ? '🟢 GREEN DOT (OS)' : analysis?.cipherDot === 'RED' ? '🔴 RED DOT (OB)' : 'NEUTRAL'}
+                    {(analysis?.monoridDot || analysis?.cipherDot) === 'GREEN' ? '🟢 GREEN DOT (OS)' : (analysis?.monoridDot || analysis?.cipherDot) === 'RED' ? '🔴 RED DOT (OB)' : 'NEUTRAL'}
                   </span>
                 </div>
 

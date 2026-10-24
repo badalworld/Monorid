@@ -11,6 +11,10 @@ export const MAX_STORED_TRADES = 2000;
 // Resolve safe persistent storage directory
 let cachedStorageDir: string | null = null;
 
+export function setStorageDir(dir: string | null): void {
+  cachedStorageDir = dir;
+}
+
 export function getStorageDir(): string {
   if (cachedStorageDir) return cachedStorageDir;
 
@@ -123,13 +127,26 @@ async function safeReadJson<T>(filePath: string, defaultValue: T): Promise<T> {
 // ─── Trade History Storage ──────────────────────────────────────────────────
 
 /**
+ * Helper to ensure a position is categorized as closed trade history
+ */
+function ensureClosedTrade(pos: MexcPosition): MexcPosition {
+  return {
+    ...pos,
+    status: 'CLOSED',
+    closedAt: pos.closedAt || pos.createdAt || Date.now(),
+    closeReason: pos.closeReason || 'MANUAL',
+  };
+}
+
+/**
  * Retrieves the full persisted trade history from server disk.
  */
 export async function getStoredTrades(): Promise<MexcPosition[]> {
   const filePath = getTradesFilePath();
   const raw = await safeReadJson<MexcPosition[]>(filePath, []);
   if (!Array.isArray(raw)) return [];
-  return deduplicateClosedPositions(raw);
+  const deduplicated = deduplicateClosedPositions(raw);
+  return deduplicated.sort((a, b) => (b.closedAt || b.createdAt || 0) - (a.closedAt || a.createdAt || 0));
 }
 
 /**
@@ -138,7 +155,8 @@ export async function getStoredTrades(): Promise<MexcPosition[]> {
 export async function saveStoredTrades(trades: MexcPosition[]): Promise<MexcPosition[]> {
   return tradesMutex.dispatch(async () => {
     const valid = Array.isArray(trades) ? trades : [];
-    const deduplicated = deduplicateClosedPositions(valid);
+    const closed = valid.map(ensureClosedTrade);
+    const deduplicated = deduplicateClosedPositions(closed);
     // Keep up to MAX_STORED_TRADES
     const trimmed = deduplicated.slice(0, MAX_STORED_TRADES);
     const filePath = getTradesFilePath();
@@ -157,8 +175,9 @@ export async function appendStoredTrades(newTrades: MexcPosition[] | MexcPositio
       return getStoredTrades();
     }
 
+    const closedIncoming = incoming.map(ensureClosedTrade);
     const existing = await safeReadJson<MexcPosition[]>(getTradesFilePath(), []);
-    const merged = deduplicateClosedPositions([...existing, ...incoming]);
+    const merged = deduplicateClosedPositions([...existing, ...closedIncoming]);
     const trimmed = merged.slice(0, MAX_STORED_TRADES);
     await atomicWriteJson(getTradesFilePath(), trimmed);
     return trimmed;

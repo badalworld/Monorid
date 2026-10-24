@@ -13,7 +13,19 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const limit = parseInt(searchParams.get('limit') || '0', 10);
-    const trades = await getStoredTrades();
+    const symbolFilter = searchParams.get('symbol');
+    const botIdFilter = searchParams.get('botId');
+
+    let trades = await getStoredTrades();
+
+    if (symbolFilter) {
+      const symNorm = symbolFilter.toUpperCase();
+      trades = trades.filter((t) => (t.symbol || '').toUpperCase().includes(symNorm));
+    }
+    if (botIdFilter) {
+      trades = trades.filter((t) => t.botId === botIdFilter);
+    }
+
     const result = limit > 0 ? trades.slice(0, limit) : trades;
     return NextResponse.json({
       success: true,

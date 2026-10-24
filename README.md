@@ -57,53 +57,63 @@ Monorid combines real-time low-latency WebSocket order book feeds, rigorous math
 
 ## Core Institutional Features
 
-### 1. 90-Contract Market Scanner Across 6 Distinct Tiers
-Monorid dynamically scans and classifies 90 top-tier perpetual futures contracts on MEXC, organizing them into 6 focused execution clusters of 15 contracts each:
-- **Apex Cyber-Volatiles**: Top 15 contracts exhibiting maximum volatility, extreme turnover velocity, and strong 24-hour directional momentum.
-- **Titan Momentum Core**: High-capitalization liquid anchors with elevated trading volume, tight spreads, and sustained breakout follow-through.
-- **Quantum Velocity**: High-beta momentum contracts with expansive intraday price velocity and clean swing amplitude.
-- **DeFi & Layer-1 Vanguard**: Decentralized finance ecosystems, Layer-1/Layer-2 networks, and modular blockchain infrastructure runners.
-- **Alpha Rapid-Scalp**: High-turnover volatile pairs optimized specifically for rapid 1-minute wave divergence and convergence entries.
-- **AI & Cyber Innovators**: Emerging artificial intelligence, decentralized compute, web3 infrastructure, and data-economy tokens.
-
-The scanner applies an adaptive liquidity filter that automatically screens out toxic illiquid pairs, synthetic equities (`_QQQ`, `_SPY`, stock tokens), non-crypto commodities, and contracts with abnormal funding rate manipulation ($>0.25\%$ per 8 hours).
+### 1. Ultra-Fast Parallel 90-Contract Market Scanner Across 6 Tiers
+Monorid features a high-throughput parallel execution pipeline scanning 90 top-tier perpetual futures contracts concurrently:
+- **Parallel Threading**: Executes multi-tier kline requests with managed 16-worker concurrency, completing entire 90-contract market scans in **under 2 seconds** (<2s latency).
+- **Rapid 12s Scanning Cadence**: Operates continuous 12-second scan cycles, capturing 1-minute wave convergence opportunities within seconds of candle formation.
+- **6 Volatility Clusters (15 Contracts Each)**:
+  - **Apex Cyber-Volatiles**: Top 15 contracts exhibiting maximum volatility, extreme turnover velocity, and strong 24-hour directional momentum.
+  - **Titan Momentum Core**: High-capitalization liquid anchors with elevated trading volume, tight spreads, and sustained breakout follow-through.
+  - **Quantum Velocity**: High-beta momentum contracts with expansive intraday price velocity and clean swing amplitude.
+  - **DeFi & Layer-1 Vanguard**: Decentralized finance ecosystems, Layer-1/Layer-2 networks, and modular blockchain infrastructure runners.
+  - **Alpha Rapid-Scalp**: High-turnover volatile pairs optimized specifically for rapid 1-minute wave divergence and convergence entries.
+  - **AI & Cyber Innovators**: Emerging artificial intelligence, decentralized compute, web3 infrastructure, and data-economy tokens.
 
 ### 2. Monorid Advanced Quantitative Momentum Oscillator & Dynamic Wave Engine
 The trading strategy operates on mathematical principles of momentum exhaustion, harmonic wave oscillations, and macroeconomic trend confirmation:
 - **Dual-Wave Convergence Algorithm**: Computes continuous fast momentum wave ($wt_1$) and smoothed harmonic trend wave ($wt_2$) across custom channel and smoothing periods.
-- **Oversold Reversal Trigger (LONG)**: A bullish convergence occurs when the fast oscillator crosses upward above the slow oscillator deep within the statistical oversold territory ($\le -53$).
-- **Overbought Reversal Trigger (SHORT)**: A bearish convergence occurs when the fast oscillator crosses downward below the slow oscillator deep within the statistical overbought territory ($\ge +53$).
+- **Oversold Reversal Trigger (LONG)**: A bullish convergence occurs when the fast oscillator crosses upward above the slow oscillator deep within statistical oversold territory ($\le -53$).
+- **Overbought Reversal Trigger (SHORT)**: A bearish convergence occurs when the fast oscillator crosses downward below the slow oscillator deep within statistical overbought territory ($\ge +53$).
 - **200 EMA Macro Trend Filter**: Long positions are exclusively permitted when current market price trades strictly above the 200-period Exponential Moving Average ($Price > EMA_{200}$). Short positions are strictly restricted to regimes where price trades below the 200 EMA ($Price < EMA_{200}$).
 - **Exclusivity Rule**: Any market bar not meeting these exact multi-factor criteria is strictly marked as `HOLD`.
 
 ### 3. Precision Automated Risk Management (1:2 R:R & EMA 200 Stop-Loss)
-- **Stop-Loss Calibration**: For Long entries, the Stop-Loss is algorithmically anchored strictly below the 200 EMA with an adaptive safety buffer ($\Delta = 0.3\%$). For Short entries, the Stop-Loss is anchored strictly above the 200 EMA plus buffer.
+- **Stop-Loss Calibration**: For Long entries, Stop-Loss is algorithmically anchored strictly below the 200 EMA with an adaptive safety buffer ($\Delta = 0.3\%$). For Short entries, Stop-Loss is anchored strictly above the 200 EMA plus buffer.
 - **Take-Profit Target (1:2 R:R)**: Take-profit is strictly locked at a mathematical 1:2 Risk-to-Reward ratio ($R:R = 2.0$), ensuring long-term positive expectancy across all executed trades.
 - **100% Full Target Exit**: Positions achieve complete execution closure at the 1:2 TP price level, locking in realized capital without lingering tail risk.
 
-### 4. Strict $0.70 USDT Minimum Balance Safety Gate
+### 4. Automatic Exchange Order Cleanup on Position Closure
+- **Zero Orphaned Orders**: When a trade closes on Take Profit or Stop Loss, Monorid automatically broadcasts batch cancellation requests to MEXC (`/api/v1/private/order/cancel_all`, `/api/v1/private/planorder/cancel_all`, `/api/v1/private/stoporder/cancel_all`).
+- Eliminates leftover trigger, plan, or limit orders from remaining active on the exchange, protecting account capital from accidental duplicate fills.
+
+### 5. Strict Premature Exit Immunity & Zero-Close Protection
+- **Ironclad Trade Lifecycle**: Positions are strictly immune from noise, synthetic drops, or API sync drops. A trade can **ONLY** close if the market price or confirmed exchange fill reaches the verified Take Profit (1:2 Target) or Stop Loss (200 EMA + 0.3% buffer).
+- **Defensive Ticker Guards**: Real-time WebSocket tick filters reject zero-price, negative, or anomalous flash ticks, preventing phantom Stop Loss triggers.
+- **Session Continuity**: API communication glitches during exchange reconciliation never falsely close or discard active portfolio positions.
+
+### 6. Interactive Cybernetic Bot Constellation UI (All 8 Fleet Units Animated)
+- **Full Fleet Visibility**: All 8 official Monorid bot units are continuously visible and animated in the dashboard orbital hub.
+- **Dynamic Orbital Telemetry**: Features real-time SVG laser conduits, pulsing energy particles, rotating radar sweepers, and glowing halo badges.
+- **Live Operational States**: Visualizes each bot's real-time mode—`HOLDING` (active position badge, leverage, and glowing green pulse) or `SCAN 1M` (hunting multi-factor convergence across its assigned sector).
+
+### 7. Strict $0.70 USDT Minimum Balance Safety Gate
 To prevent margin liquidation cascading and sub-minimum order failures on MEXC:
 - Monorid enforces a strict balance constraint of **`MIN_AVAILABLE_BALANCE_USDT = 0.70`**.
 - Both the client interface and the server-side order dispatch route validate available margin before emitting any execution call.
-- If available wallet balance drops below $0.70 USDT, the engine automatically engages a safe state: execution buttons lock, warning badges display `< $0.70 Blocked`, and new market orders are rejected until equity is replenished.
+- If available wallet balance drops below $0.70 USDT, the engine automatically engages a safe state: execution locks and warning badges display `< $0.70 Blocked` until equity is replenished.
 
-### 5. Institutional Net PnL, Fee & Funding Rate Accounting
+### 8. Institutional Net PnL, Fee & Funding Rate Accounting
 Unlike retail bots that display naive gross profit, Monorid tracks the complete economic reality of perpetual futures:
 - **Exchange Fee Extraction**: Automatically records and attributes both Maker and Taker execution fees (`totalFee`, `openFee`, `closeFee`).
 - **Funding Rate Reconciliation**: Captures positive and negative funding cash flows accrued during position lifecycles.
 - **Exact Net Realized PnL**: Integrates closed position history directly from exchange settlement records, ensuring 100% mathematical auditability against the broker ledger.
 
-### 6. Low-Latency WebSocket Tick & Mark Price Ingestion Stream
-- Directly connects to MEXC Futures WebSocket gateway (`wss://contract.mexc.com/edge`).
-- Streams real-time mark prices, order book updates, and tick changes with automatic reconnection backoff and heartbeat keep-alive pings.
-- Provides sub-second unrealized PnL recalculations for all active positions without REST API rate-limit saturation.
+### 9. Persistent Server-Side Trade History & Audit Storage
+- Persistent file-backed JSON storage engine (`/api/storage/trades` and `/api/storage/logs`) with atomic file writes and mutex queue concurrency.
+- Full automatic client hydration on page load so trade history and audit logs are permanently preserved across refreshes, tab reloads, and multi-device access.
+- One-click JSON export buttons to download complete trade histories and audit telemetry records.
 
-### 7. Interactive High-Resolution Candlestick & Oscillator Chart Modal
-- Fully customized interactive SVG candlestick and momentum wave chart inspector.
-- Visualizes 1-minute OHLCV candles, 200-period EMA dynamic curve, oscillator wave overbought/oversold bands, and exact entry, SL, and TP target levels.
-- Allows quantitative traders to inspect historical signal validity on demand for any of the 90 supported assets.
-
-### 8. Real-Time Telegram Alerting Pipeline
+### 10. Real-Time Telegram Alerting Pipeline
 Direct integration with the Telegram Bot API emits rich, structured HTML trade intelligence:
 - **Entry Confirmations**: Dispatches symbol, direction, entry price, leverage, stop-loss, and 1:2 take-profit targets.
 - **Take-Profit & Stop-Loss Alerts**: Dispatches execution notifications with net realized PnL and exit prices.

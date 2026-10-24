@@ -15,7 +15,8 @@ export async function GET(req: NextRequest) {
     const typeFilter = searchParams.get('type');
     const symbolFilter = searchParams.get('symbol');
 
-    let logs = await getStoredLogs(limit);
+    // Fetch full stored logs before filtering so filters are not starved by limit
+    let logs = await getStoredLogs(0);
 
     if (typeFilter) {
       logs = logs.filter((l) => l.type === typeFilter);
@@ -25,10 +26,13 @@ export async function GET(req: NextRequest) {
       logs = logs.filter((l) => (l.symbol || '').toUpperCase().includes(symNorm));
     }
 
+    const result = limit > 0 ? logs.slice(0, limit) : logs;
+
     return NextResponse.json({
       success: true,
-      count: logs.length,
-      logs,
+      count: result.length,
+      total: logs.length,
+      logs: result,
     });
   } catch (err: any) {
     console.error('[API /api/storage/logs GET] Error:', err);

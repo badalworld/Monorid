@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { X, TrendingUp, Zap, Radio } from 'lucide-react';
-import { Candle, SignalResult, calculateEMA, calculateMarketCipherB } from '@/lib/strategy';
+import { Candle, SignalResult, calculateEMA, calculateMonoridIndicator } from '@/lib/strategy';
 
 interface CandleChartModalProps {
   symbol: string;
@@ -24,11 +24,11 @@ const PRICE_BOTTOM = PRICE_TOP + PRICE_HEIGHT;
 
 // Monorid Oscillator Sub-Pane coordinates
 const SUB_PANE_LABEL_Y = 258;
-const CIPHER_TOP = 272;
-const CIPHER_HEIGHT = 138;
-const CIPHER_BOTTOM = CIPHER_TOP + CIPHER_HEIGHT;
-const CIPHER_MID_Y = CIPHER_TOP + CIPHER_HEIGHT / 2; // zero line
-const CIPHER_RANGE = 85; // Oscillates between -85 and +85
+const MONORID_TOP = 272;
+const MONORID_HEIGHT = 138;
+const MONORID_BOTTOM = MONORID_TOP + MONORID_HEIGHT;
+const MONORID_MID_Y = MONORID_TOP + MONORID_HEIGHT / 2; // zero line
+const MONORID_RANGE = 85; // Oscillates between -85 and +85
 const VISIBLE_COUNT = 75; // Most recent 75 1M bars (~1.25 hours) for clear candlestick visibility
 
 function formatNum(val: number, decimals = 2): string {
@@ -59,7 +59,7 @@ export function CandleChartModal({
 
   const { wt1: fullWt1Series, wt2: fullWt2Series } = useMemo(() => {
     if (!candles || candles.length === 0) return { wt1: [], wt2: [] };
-    return calculateMarketCipherB(candles);
+    return calculateMonoridIndicator(candles);
   }, [candles]);
 
   // 2. Viewport window: show latest 75 candles for optimal candlestick and indicator readability
@@ -79,7 +79,7 @@ export function CandleChartModal({
   const currentEMA = analysis?.ema ?? (ema200Series.length > 0 ? ema200Series[ema200Series.length - 1] : 0);
   const currentWT1 = analysis?.wt1 ?? (wt1Series.length > 0 ? Number(wt1Series[wt1Series.length - 1].toFixed(1)) : 0);
   const currentWT2 = analysis?.wt2 ?? (wt2Series.length > 0 ? Number(wt2Series[wt2Series.length - 1].toFixed(1)) : 0);
-  const cipherDot = analysis?.cipherDot ?? 'NONE';
+  const monoridDot = analysis?.monoridDot ?? analysis?.cipherDot ?? 'NONE';
   const isPriceAboveEma = currentPrice > currentEMA;
 
   // Active bar under crosshair cursor (or latest if not hovering)
@@ -102,9 +102,9 @@ export function CandleChartModal({
     entryY,
     slY,
     tpY,
-    cipherWt1PathD,
-    cipherWt1AreaD,
-    cipherWt2PathD,
+    monoridWt1PathD,
+    monoridWt1AreaD,
+    monoridWt2PathD,
     crossoverDots,
   } = useMemo(() => {
     if (!visibleCandles || visibleCandles.length === 0) {
@@ -118,9 +118,9 @@ export function CandleChartModal({
         entryY: undefined,
         slY: undefined,
         tpY: undefined,
-        cipherWt1PathD: '',
-        cipherWt1AreaD: '',
-        cipherWt2PathD: '',
+        monoridWt1PathD: '',
+        monoridWt1AreaD: '',
+        monoridWt2PathD: '',
         crossoverDots: [],
       };
     }
@@ -162,9 +162,9 @@ export function CandleChartModal({
       return PRICE_TOP + PRICE_HEIGHT - ((p - min) / (max - min)) * PRICE_HEIGHT;
     };
 
-    const cipherToY = (val: number) => {
-      const clamped = Math.max(-CIPHER_RANGE, Math.min(CIPHER_RANGE, val));
-      return CIPHER_MID_Y - (clamped / CIPHER_RANGE) * (CIPHER_HEIGHT / 2);
+    const monoridToY = (val: number) => {
+      const clamped = Math.max(-MONORID_RANGE, Math.min(MONORID_RANGE, val));
+      return MONORID_MID_Y - (clamped / MONORID_RANGE) * (MONORID_HEIGHT / 2);
     };
 
     // Candlesticks
@@ -231,12 +231,12 @@ export function CandleChartModal({
       const x = PADDING.left + i * (plotWidth / visibleCandles.length) + (plotWidth / visibleCandles.length) / 2;
       const w1 = wt1Series[i] ?? 0;
       const w2 = wt2Series[i] ?? 0;
-      const y1 = cipherToY(w1);
-      const y2 = cipherToY(w2);
+      const y1 = monoridToY(w1);
+      const y2 = monoridToY(w2);
 
       if (i === 0) {
         wt1Path = `M ${x.toFixed(1)} ${y1.toFixed(1)}`;
-        wt1Area = `M ${x.toFixed(1)} ${CIPHER_MID_Y.toFixed(1)} L ${x.toFixed(1)} ${y1.toFixed(1)}`;
+        wt1Area = `M ${x.toFixed(1)} ${MONORID_MID_Y.toFixed(1)} L ${x.toFixed(1)} ${y1.toFixed(1)}`;
         wt2Path = `M ${x.toFixed(1)} ${y2.toFixed(1)}`;
       } else {
         wt1Path += ` L ${x.toFixed(1)} ${y1.toFixed(1)}`;
@@ -263,7 +263,7 @@ export function CandleChartModal({
       }
 
       if (i === visibleCandles.length - 1) {
-        wt1Area += ` L ${x.toFixed(1)} ${CIPHER_MID_Y.toFixed(1)} Z`;
+        wt1Area += ` L ${x.toFixed(1)} ${MONORID_MID_Y.toFixed(1)} Z`;
       }
     }
 
@@ -277,9 +277,9 @@ export function CandleChartModal({
       entryY: enY,
       slY: sY,
       tpY: tY,
-      cipherWt1PathD: wt1Path,
-      cipherWt1AreaD: wt1Area,
-      cipherWt2PathD: wt2Path,
+      monoridWt1PathD: wt1Path,
+      monoridWt1AreaD: wt1Area,
+      monoridWt2PathD: wt2Path,
       crossoverDots: dots,
     };
   }, [visibleCandles, analysis, ema200Series, wt1Series, wt2Series]);
@@ -292,8 +292,8 @@ export function CandleChartModal({
     ? activeDot.type === 'GREEN'
       ? '🟢 GREEN DOT (OS)'
       : '🔴 RED DOT (OB)'
-    : (activeIdx === visibleCandles.length - 1 && cipherDot !== 'NONE'
-        ? (cipherDot === 'GREEN' ? '🟢 GREEN DOT (OS)' : '🔴 RED DOT (OB)')
+    : (activeIdx === visibleCandles.length - 1 && monoridDot !== 'NONE'
+        ? (monoridDot === 'GREEN' ? '🟢 GREEN DOT (OS)' : '🔴 RED DOT (OB)')
         : '⚪ NEUTRAL');
 
   // Mouse move handler for interactive crosshair inspection
@@ -454,7 +454,7 @@ export function CandleChartModal({
             >
               <defs>
                 {/* Gradients */}
-                <linearGradient id="cipherAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id="monoridAreaGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#10b981" stopOpacity="0.35" />
                   <stop offset="50%" stopColor="#06b6d4" stopOpacity="0.15" />
                   <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.02" />
@@ -687,30 +687,30 @@ export function CandleChartModal({
               {/* Zero Center Line */}
               <line
                 x1={PADDING.left}
-                y1={CIPHER_MID_Y}
+                y1={MONORID_MID_Y}
                 x2={SVG_WIDTH - PADDING.right}
-                y2={CIPHER_MID_Y}
+                y2={MONORID_MID_Y}
                 stroke="#475569"
                 strokeWidth="1"
                 strokeDasharray="3 3"
               />
-              <text x={SVG_WIDTH - PADDING.right + 5} y={CIPHER_MID_Y + 3} fill="#64748b" fontSize="8" fontFamily="monospace">
+              <text x={SVG_WIDTH - PADDING.right + 5} y={MONORID_MID_Y + 3} fill="#64748b" fontSize="8" fontFamily="monospace">
                 0
               </text>
 
               {/* Overbought Horizontal Lines (+60 Level 1, +53 Level 2) */}
               <line
                 x1={PADDING.left}
-                y1={CIPHER_MID_Y - (60 / CIPHER_RANGE) * (CIPHER_HEIGHT / 2)}
+                y1={MONORID_MID_Y - (60 / MONORID_RANGE) * (MONORID_HEIGHT / 2)}
                 x2={SVG_WIDTH - PADDING.right}
-                y2={CIPHER_MID_Y - (60 / CIPHER_RANGE) * (CIPHER_HEIGHT / 2)}
+                y2={MONORID_MID_Y - (60 / MONORID_RANGE) * (MONORID_HEIGHT / 2)}
                 stroke="#ef4444"
                 strokeWidth="1"
                 opacity="0.8"
               />
               <text
                 x={SVG_WIDTH - PADDING.right + 5}
-                y={CIPHER_MID_Y - (60 / CIPHER_RANGE) * (CIPHER_HEIGHT / 2) + 3}
+                y={MONORID_MID_Y - (60 / MONORID_RANGE) * (MONORID_HEIGHT / 2) + 3}
                 fill="#ef4444"
                 fontSize="8"
                 fontFamily="monospace"
@@ -721,9 +721,9 @@ export function CandleChartModal({
 
               <line
                 x1={PADDING.left}
-                y1={CIPHER_MID_Y - (53 / CIPHER_RANGE) * (CIPHER_HEIGHT / 2)}
+                y1={MONORID_MID_Y - (53 / MONORID_RANGE) * (MONORID_HEIGHT / 2)}
                 x2={SVG_WIDTH - PADDING.right}
-                y2={CIPHER_MID_Y - (53 / CIPHER_RANGE) * (CIPHER_HEIGHT / 2)}
+                y2={MONORID_MID_Y - (53 / MONORID_RANGE) * (MONORID_HEIGHT / 2)}
                 stroke="#f87171"
                 strokeWidth="1"
                 strokeDasharray="2 3"
@@ -731,7 +731,7 @@ export function CandleChartModal({
               />
               <text
                 x={SVG_WIDTH - PADDING.right + 5}
-                y={CIPHER_MID_Y - (53 / CIPHER_RANGE) * (CIPHER_HEIGHT / 2) + 3}
+                y={MONORID_MID_Y - (53 / MONORID_RANGE) * (MONORID_HEIGHT / 2) + 3}
                 fill="#f87171"
                 fontSize="8"
                 fontFamily="monospace"
@@ -742,9 +742,9 @@ export function CandleChartModal({
               {/* Oversold Horizontal Lines (-53 Level 2, -60 Level 1) */}
               <line
                 x1={PADDING.left}
-                y1={CIPHER_MID_Y - (-53 / CIPHER_RANGE) * (CIPHER_HEIGHT / 2)}
+                y1={MONORID_MID_Y - (-53 / MONORID_RANGE) * (MONORID_HEIGHT / 2)}
                 x2={SVG_WIDTH - PADDING.right}
-                y2={CIPHER_MID_Y - (-53 / CIPHER_RANGE) * (CIPHER_HEIGHT / 2)}
+                y2={MONORID_MID_Y - (-53 / MONORID_RANGE) * (MONORID_HEIGHT / 2)}
                 stroke="#34d399"
                 strokeWidth="1"
                 strokeDasharray="2 3"
@@ -752,7 +752,7 @@ export function CandleChartModal({
               />
               <text
                 x={SVG_WIDTH - PADDING.right + 5}
-                y={CIPHER_MID_Y - (-53 / CIPHER_RANGE) * (CIPHER_HEIGHT / 2) + 3}
+                y={MONORID_MID_Y - (-53 / MONORID_RANGE) * (MONORID_HEIGHT / 2) + 3}
                 fill="#34d399"
                 fontSize="8"
                 fontFamily="monospace"
@@ -762,16 +762,16 @@ export function CandleChartModal({
 
               <line
                 x1={PADDING.left}
-                y1={CIPHER_MID_Y - (-60 / CIPHER_RANGE) * (CIPHER_HEIGHT / 2)}
+                y1={MONORID_MID_Y - (-60 / MONORID_RANGE) * (MONORID_HEIGHT / 2)}
                 x2={SVG_WIDTH - PADDING.right}
-                y2={CIPHER_MID_Y - (-60 / CIPHER_RANGE) * (CIPHER_HEIGHT / 2)}
+                y2={MONORID_MID_Y - (-60 / MONORID_RANGE) * (MONORID_HEIGHT / 2)}
                 stroke="#10b981"
                 strokeWidth="1"
                 opacity="0.8"
               />
               <text
                 x={SVG_WIDTH - PADDING.right + 5}
-                y={CIPHER_MID_Y - (-60 / CIPHER_RANGE) * (CIPHER_HEIGHT / 2) + 3}
+                y={MONORID_MID_Y - (-60 / MONORID_RANGE) * (MONORID_HEIGHT / 2) + 3}
                 fill="#10b981"
                 fontSize="8"
                 fontFamily="monospace"
@@ -781,14 +781,14 @@ export function CandleChartModal({
               </text>
 
               {/* WT1 Shaded Area */}
-              {cipherWt1AreaD && (
-                <path d={cipherWt1AreaD} fill="url(#cipherAreaGrad)" />
+              {monoridWt1AreaD && (
+                <path d={monoridWt1AreaD} fill="url(#monoridAreaGrad)" />
               )}
 
               {/* WT1 Wave Line (Emerald/Teal, Fast Wave) */}
-              {cipherWt1PathD && (
+              {monoridWt1PathD && (
                 <path
-                  d={cipherWt1PathD}
+                  d={monoridWt1PathD}
                   fill="none"
                   stroke="#10b981"
                   strokeWidth="1.8"
@@ -798,9 +798,9 @@ export function CandleChartModal({
               )}
 
               {/* WT2 Wave Line (Purple/Violet, Slow Wave SMA 4) */}
-              {cipherWt2PathD && (
+              {monoridWt2PathD && (
                 <path
-                  d={cipherWt2PathD}
+                  d={monoridWt2PathD}
                   fill="none"
                   stroke="#c084fc"
                   strokeWidth="1.8"
@@ -836,7 +836,7 @@ export function CandleChartModal({
               ))}
 
               {/* Sub-pane legend (bottom left inside sub-pane) */}
-              <g transform={`translate(${PADDING.left + 5}, ${CIPHER_BOTTOM - 8})`}>
+              <g transform={`translate(${PADDING.left + 5}, ${MONORID_BOTTOM - 8})`}>
                 <line x1="0" y1="0" x2="12" y2="0" stroke="#10b981" strokeWidth="2" />
                 <text x="16" y="3" fill="#34d399" fontSize="8" fontFamily="monospace">WT1 (Wave 1)</text>
 
@@ -856,7 +856,7 @@ export function CandleChartModal({
                   x1={crosshairX}
                   y1={PRICE_TOP}
                   x2={crosshairX}
-                  y2={CIPHER_BOTTOM}
+                  y2={MONORID_BOTTOM}
                   stroke="#38bdf8"
                   strokeWidth="1"
                   strokeDasharray="3 3"

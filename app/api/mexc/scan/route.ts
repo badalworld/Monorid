@@ -45,8 +45,9 @@ export async function POST(req: NextRequest) {
       targetSymbols = tickers.map((t) => t.symbol);
     }
 
-    // Process all targeted contracts with managed concurrency (8 in-flight) to prevent MEXC 429s
-    const scanResults = await runWithConcurrency(targetSymbols, 8, async (symbol) => {
+    const startTime = Date.now();
+    // High-Throughput Concurrent Pipeline (16 in-flight workers) for ultra-fast 1M market scanning
+    const scanResults = await runWithConcurrency(targetSymbols, 16, async (symbol) => {
       try {
         const klines = await fetchMexcKlines(symbol, 280, 'Min1');
         if (klines.length < 60) {
@@ -72,9 +73,12 @@ export async function POST(req: NextRequest) {
       }
     });
 
+    const durationMs = Date.now() - startTime;
+
     return NextResponse.json({
       success: true,
       timestamp: Date.now(),
+      durationMs,
       results: scanResults,
     });
   } catch (error: any) {

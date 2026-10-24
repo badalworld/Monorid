@@ -3,6 +3,7 @@ import {
   placeMexcOrder,
   setMexcTPSL,
   closeMexcPosition,
+  cancelAllPendingOrders,
   fetchMexcPositions,
   fetchMexcBalance,
   fetchMexcPositionMode,
@@ -133,6 +134,12 @@ export async function POST(req: NextRequest) {
           positionType as 1 | 2,
           quantity
         );
+        return NextResponse.json(result);
+      }
+
+      case 'cancel_all': {
+        const symbol = validateSymbol(params.symbol);
+        const result = await cancelAllPendingOrders(MEXC_API_KEY, MEXC_SECRET_KEY, symbol);
         return NextResponse.json(result);
       }
 
